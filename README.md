@@ -28,21 +28,24 @@ shows live progress for each task with a final summary.
 | `.7z`              | `sevenz_rust2`     |
 | `.z01`, `.001`     | `unar` subprocess  |
 
+## Prerequisites
+
+| Tool | Required? | Purpose | Install |
+|---|---|---|---|
+| Rust toolchain (`cargo`, edition 2024) | yes | Build & install `autoarc` | <https://rustup.rs> |
+| `unar` + `lsar` | yes for split archives (`.z01`, `.001`) and the `autoarc lsar` subcommand | Subprocess fallback backend | macOS: `brew install unar`<br>Debian/Ubuntu: `sudo apt install unar`<br>Arch: `sudo pacman -S unarchiver` |
+| `file` | optional | Fallback MIME sniffer for MPEG-TS detection (`infer` doesn't cover `.ts`) | preinstalled on macOS / most Linux distros |
+
+The ZIP, RAR, and 7z backends are pure-Rust crates — they have no external runtime
+dependency, so if you only deal with single-volume archives in those formats you
+can skip installing `unar` entirely.
+
 ## Install
 
 ```bash
 git clone https://github.com/<you>/autoarc.git
 cd autoarc
 cargo install --path .
-```
-
-System dependencies (only needed for split archives via the `unar` backend):
-
-```bash
-# macOS
-brew install unar
-# Debian / Ubuntu
-sudo apt install unar
 ```
 
 ## Configuration
