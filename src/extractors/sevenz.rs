@@ -51,7 +51,18 @@ fn check_password(archive_path: &Path, password_str: &str) -> Result<bool, Seven
 
     match result {
         Ok(_) => Ok(true),
-        Err(SevenzError::MaybeBadPassword(_)) => Ok(false),
+        // `sevenz-rust2` reports "this password didn't work" via two distinct
+        // variants depending on *where* the failure surfaces:
+        //   * `MaybeBadPassword` — decryption produced garbage / bad checksum.
+        //   * `PasswordRequired` — the archive is encrypted and we supplied
+        //     the empty password (so the reader refused to even start).
+        // Both cases mean "this candidate is wrong, try the next one"; bubble
+        // them to the caller as `Ok(false)` so the outer loop keeps iterating.
+        // Historically we only mapped `MaybeBadPassword`, which caused the
+        // very first (empty) attempt against an encrypted archive to fail
+        // the whole task with `PasswordRequired` instead of advancing to the
+        // real passwords in the list.
+        Err(SevenzError::MaybeBadPassword(_)) | Err(SevenzError::PasswordRequired) => Ok(false),
         Err(e) => Err(e),
     }
 }
