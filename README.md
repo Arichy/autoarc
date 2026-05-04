@@ -7,41 +7,27 @@ with a list of candidate passwords.
 finds, automatically tries each password in your `AUTOARC_PASSWORDS` list, and
 shows live progress for each task with a final summary.
 
-## Features
+## Platform support
 
-- Concurrent extraction powered by [`tokio`]
-- Native handling of `zip`, `rar`, and `7z`
-- Subprocess fallback to `unar` / `lsar` for split archives (`.z01`, `.001`)
-- Recursive: nested archives produced by extraction are queued automatically
-- Multi-password trial-and-error per archive (stops on first match)
-- Live `indicatif` progress bars + a coloured run summary
-- Archives are extracted **in place** next to the originals — each archive
-  gets a sibling `{filename}_out/` directory; originals are never moved
-- Detected videos (`.mp4`, `.ts`) inside archives get their extension corrected
-  in-place
-
-## Supported formats
-
-| Extension          | Backend            |
-|--------------------|--------------------|
-| `.zip`             | `zip` crate        |
-| `.rar`             | `unrar` crate      |
-| `.7z`              | `sevenz_rust2`     |
-| `.z01`, `.001`     | `unar` subprocess  |
+> ⚠️ **Only tested on macOS.** The author develops on macOS and does not own a
+> Windows machine, so **Windows is not tested and not guaranteed to work.**
+> Linux *should* work since all dependencies are cross-platform, but has not
+> been exercised regularly. Bug reports / PRs from Linux and Windows users
+> are very welcome.
 
 ## Prerequisites
 
 | Tool | Required? | Purpose | Install |
 |---|---|---|---|
-| Rust toolchain (`cargo`, edition 2024) | yes | Build & install `autoarc` | <https://rustup.rs> |
-| `unar` + `lsar` | yes for split archives (`.z01`, `.001`) and the `autoarc lsar` subcommand | Subprocess fallback backend | macOS: `brew install unar`<br>Debian/Ubuntu: `sudo apt install unar`<br>Arch: `sudo pacman -S unarchiver` |
-| `file` | optional | Fallback MIME sniffer for MPEG-TS detection (`infer` doesn't cover `.ts`) | preinstalled on macOS / most Linux distros |
+| Rust toolchain (`cargo`, edition 2024, rustc ≥ 1.85) | yes | Build & install `autoarc` | <https://rustup.rs> |
+| `unar` + `lsar` | yes for split archives (`.z01`, `.001`), SFX `.exe` archives, and the `autoarc lsar` subcommand | Subprocess fallback backend | macOS: `brew install unar`<br>Debian/Ubuntu: `sudo apt install unar`<br>Arch: `sudo pacman -S unarchiver` |
+| `file` | optional | Fallback MIME sniffer for MPEG-TS detection and plain-text classification (`infer` doesn't cover those) | preinstalled on macOS / most Linux distros |
 
 The ZIP, RAR, and 7z backends are pure-Rust crates — they have no external runtime
 dependency, so if you only deal with single-volume archives in those formats you
 can skip installing `unar` entirely.
 
-## Install
+## Installation
 
 From crates.io (once published):
 
@@ -169,6 +155,31 @@ just fmt-check     # verify the tree is rustfmt-clean (CI-friendly)
 just lint          # strict clippy: every warning is an error
 just check         # one-shot: fmt-check + lint + release build
 ```
+
+## Features
+
+- Concurrent extraction powered by [`tokio`]
+- Native handling of `zip`, `rar`, and `7z`
+- Subprocess fallback to `unar` / `lsar` for split archives (`.z01`, `.001`)
+  and SFX `.exe` payloads
+- Recursive: nested archives produced by extraction are queued automatically
+- Multi-password trial-and-error per archive (stops on first match)
+- Live `indicatif` progress bars + a coloured run summary
+- Archives are extracted **in place** next to the originals — each archive
+  gets a sibling `{filename}_out/` directory; originals are never moved
+- Detected videos (`.mp4`, `.ts`) inside archives get their extension corrected
+  in-place; audio / PDF / Office / text files are counted and reported but
+  never modified
+
+## Supported formats
+
+| Extension          | Backend            |
+|--------------------|--------------------|
+| `.zip`             | `zip` crate        |
+| `.rar`             | `unrar` crate      |
+| `.7z`              | `sevenz_rust2`     |
+| `.z01`, `.001`     | `unar` subprocess  |
+| `.exe` (SFX)       | `unar` subprocess  |
 
 ## Behaviour
 
