@@ -56,10 +56,20 @@ impl Extractor for UnarExtractor {
             return Ok(ExtractOutcome::BadPassword);
         }
 
-        let entries = lsar(path)?;
+        // Walk the extracted tree directly rather than re-interrogating the
+        // archive with `lsar`: `lsar` refuses to list password-protected
+        // archives without `-p`, and after a successful extraction the on-disk
+        // layout is the source of truth anyway.
         let mut nested = Vec::new();
-        for entry in entries {
-            let filepath = outdir.join(&entry);
+        for entry in walkdir::WalkDir::new(&outdir)
+            .min_depth(1)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let filepath = entry.into_path();
             let kind = get_file_type(&filepath);
             if is_type_archive(kind) {
                 nested.push(filepath);

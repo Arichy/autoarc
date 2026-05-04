@@ -69,6 +69,7 @@ pub fn run(
             try_with_passwords::<sevenz::SevenzExtractor>(&path, passwords, reporter)?
         }
         FileType::Multi => try_with_passwords::<unar::UnarExtractor>(&path, passwords, reporter)?,
+        FileType::Sfx => try_with_passwords::<unar::UnarExtractor>(&path, passwords, reporter)?,
         unsupported => return Err(AutoarcError::UnsupportedFileType(unsupported).into()),
     };
     Ok(children

@@ -77,6 +77,7 @@ impl Reporter {
             bar,
             label,
             stats: Arc::clone(&self.stats),
+            multi: self.multi.clone(),
         }
     }
 
@@ -151,10 +152,17 @@ impl Reporter {
 /// Extractors set the bar length when they know the entry count up-front
 /// (zip / 7z), or leave it unset and call [`Self::tick`] for spinner-style updates
 /// (rar / unar).
+///
+/// When the task finishes the bar is **cleared** and the final status is
+/// printed as a log line above the remaining live bars via
+/// [`MultiProgress::println`]. This keeps the rendered bar region bounded to
+/// in-flight tasks only, so we don't run into indicatif's terminal-height
+/// rendering cap when hundreds of archives are queued.
 pub struct TaskReporter {
     bar: ProgressBar,
     label: String,
     stats: Arc<Mutex<Stats>>,
+    multi: MultiProgress,
 }
 
 impl TaskReporter {
@@ -194,18 +202,31 @@ impl TaskReporter {
     }
 
     /// Finish the bar with a success message.
+    ///
+    /// Clears the bar from the active region and logs a persistent
+    /// `Task   OK <label>` line above the remaining live bars.
     pub fn finish_ok(self) {
-        self.bar
-            .finish_with_message(format!("{} {}", style("OK").green().bold(), self.label));
+        self.bar.finish_and_clear();
+        let _ = self.multi.println(format!(
+            "{:>10} {} {}",
+            style("Task").yellow(),
+            style("OK").green().bold(),
+            self.label,
+        ));
     }
 
     /// Finish the bar with an error message.
+    ///
+    /// Clears the bar from the active region and logs a persistent
+    /// `Task  ERR <label>: <err>` line above the remaining live bars.
     pub fn finish_err(self, err: &dyn std::fmt::Display) {
-        self.bar.finish_with_message(format!(
-            "{} {}: {}",
+        self.bar.finish_and_clear();
+        let _ = self.multi.println(format!(
+            "{:>10} {} {}: {}",
+            style("Task").yellow(),
             style("ERR").red().bold(),
             self.label,
-            err
+            err,
         ));
     }
 }

@@ -15,7 +15,8 @@ shows live progress for each task with a final summary.
 - Recursive: nested archives produced by extraction are queued automatically
 - Multi-password trial-and-error per archive (stops on first match)
 - Live `indicatif` progress bars + a coloured run summary
-- Originals are backed up under `MM-DD_bak/` before being moved into `MM-DD/`
+- Archives are extracted **in place** next to the originals — each archive
+  gets a sibling `{filename}_out/` directory; originals are never moved
 - Detected videos (`.mp4`, `.ts`) inside archives get their extension corrected
   in-place
 
@@ -83,7 +84,7 @@ autoarc <DIR> -r
 autoarc <DIR> --dry-run
 autoarc <DIR> -n
 
-# Skip the interactive [y/N] confirmation prompt
+# Skip the interactive [Y/n] confirmation prompt
 autoarc <DIR> --yes
 autoarc <DIR> -y
 
@@ -117,7 +118,7 @@ Plan: 5 archives (2 multi-volume), 12.4 GiB total — /tmp/in (depth=3)
 
 Note: 4 video file(s) will be renamed in place.
 
-Continue? [y/N]
+Continue? [Y/n]
 ```
 
 - **Multi-volume archives** (`foo.z01` + `foo.zip` + `foo.z02`…, or
@@ -128,11 +129,12 @@ Continue? [y/N]
 - The prompt is **automatically skipped when stdin is not a TTY** (e.g. when
   the output is piped or run in CI), so existing scripts keep working.
 
-When `depth == 1` (the default), top-level archives are first **moved into
-`<DIR>/MM-DD/` and copied into `<DIR>/MM-DD_bak/`** for safety.
-When `depth > 1`, archives are processed **in place** — the date-folder ritual
-is skipped and our own `_out` / `MM-DD*` directories are pruned from the walk
-to avoid re-processing previous runs' output.
+When `depth == 1` (the default), only the immediate contents of `<DIR>` are
+scanned. When `depth > 1` (or `--recursive`), autoarc descends into
+subdirectories while pruning its own `_out/` output folders from the walk to
+avoid re-processing previous runs. In either mode, archives are extracted
+**in place** — each archive gets a sibling `{filename}_out/` directory and
+the original archive is never moved.
 
 ### `just` recipes
 
@@ -162,18 +164,14 @@ Given `autoarc /tmp/in` (default `--depth 1`):
 
 ```
 /tmp/in/
-├── MM-DD/                # working dir for today's run
-│   ├── foo.zip
-│   ├── foo_out/...       # extracted contents next to the archive
-│   ├── bar.rar
-│   └── bar_out/...
-└── MM-DD_bak/            # original copies parked for safety
-    ├── foo.zip
-    └── bar.rar
+├── foo.zip              # original, untouched
+├── foo_out/...          # extracted contents, sibling of the archive
+├── bar.rar
+└── bar_out/...
 ```
 
-With `--depth N > 1` or `--recursive`, archives are extracted **in place**
-(no MM-DD movement, no backup copy):
+With `--depth N > 1` or `--recursive`, subdirectories are walked too; the
+layout inside each directory is the same:
 
 ```
 /tmp/in/
@@ -183,14 +181,17 @@ With `--depth N > 1` or `--recursive`, archives are extracted **in place**
     └── bar_out/...
 ```
 
+- Archives are always extracted **in place** — autoarc never moves or
+  backs up your originals. If you want a safety copy, make it yourself
+  before running.
 - The depth limit only applies to the **initial** scan. Archives produced *by
   extraction itself* are always queued recursively, regardless of `--depth`.
-- Multi-volume archives are kept in place so their `.z02`, `.z03`, ... siblings
-  remain reachable.
+- Multi-volume archives are handled as a single logical unit and extracted in
+  place so their `.z02`, `.z03`, ... siblings remain reachable.
 - Videos found during the scan are renamed in-place to enforce the canonical
   extension.
-- During recursive scans, directories named `*_out`, `MM-DD`, or `MM-DD_bak`
-  are skipped to avoid re-processing previous runs' artefacts.
+- During recursive scans, directories named `*_out` are skipped to avoid
+  re-processing previous runs' artefacts.
 
 ## Logging
 

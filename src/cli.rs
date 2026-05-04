@@ -14,8 +14,6 @@ use std::path::PathBuf;
     name = "autoarc",
     about = "Concurrent multi-format archive extractor with password trial-and-error",
     version,
-    // Bare `autoarc` with no args / subcommand prints help instead of erroring.
-    arg_required_else_help = true,
     // `autoarc <DIR>` works without naming a subcommand; `autoarc type FILE`
     // dispatches to the subcommand. When a subcommand is present the top-level
     // flags/args are ignored.
@@ -24,8 +22,10 @@ use std::path::PathBuf;
 pub struct Args {
     /// Directory to scan for archives.
     ///
-    /// Required unless a subcommand (`type`, `lsar`, …) is used.
-    pub dir: Option<PathBuf>,
+    /// Defaults to the current working directory (`.`) when omitted.
+    /// Ignored when a subcommand (`type`, `lsar`, …) is used.
+    #[arg(default_value = ".")]
+    pub dir: PathBuf,
 
     /// Maximum directory depth to scan for archives.
     ///

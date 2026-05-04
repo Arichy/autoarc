@@ -2,8 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::Local;
-
 /// Build the per-entry output path: `<archive_dir>/<archive_stem>_out/<filename>`.
 ///
 /// All extractors funnel writes through this helper so that nested archives can be
@@ -17,18 +15,6 @@ pub fn create_outpath(archive_path: &Path, filename: &Path) -> PathBuf {
     PathBuf::from(dirname)
         .join(format!("{basename}_out"))
         .join(filename)
-}
-
-/// Today's working directory inside `basedir`, named like `MM-DD`.
-pub fn today_dir_name(basedir: &Path) -> PathBuf {
-    let stamp = Local::now().format("%m-%d").to_string();
-    basedir.join(stamp)
-}
-
-/// Today's backup directory inside `basedir`, named like `MM-DD_bak`.
-pub fn today_bak_dir_name(basedir: &Path) -> PathBuf {
-    let stamp = Local::now().format("%m-%d_bak").to_string();
-    basedir.join(stamp)
 }
 
 /// Compute `absolute_path` relative to `dir`, falling back to the original path
