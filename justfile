@@ -9,10 +9,10 @@
 #   just debug /path/to/archives      # same but with RUST_LOG=debug
 
 run dir="./archives" *args="":
-  RUST_LOG=info cargo run --release -- autoarc {{dir}} {{args}}
+  RUST_LOG=info cargo run --release -- {{dir}} {{args}}
 
 debug dir="./archives" *args="":
-  RUST_LOG=debug cargo run --release -- autoarc {{dir}} {{args}}
+  RUST_LOG=debug cargo run --release -- {{dir}} {{args}}
 
 type FILE:
   cargo run --release -- type {{FILE}}

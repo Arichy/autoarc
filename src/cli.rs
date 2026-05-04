@@ -4,18 +4,57 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 /// Top-level CLI entry point.
+///
+/// The common case — "extract every archive in this directory" — is the
+/// default action at the top level, so users type `autoarc <DIR>` (not
+/// `autoarc autoarc <DIR>`). Introspection helpers live under real
+/// subcommands (`autoarc type`, `autoarc lsar`).
 #[derive(Debug, Parser)]
 #[command(
     name = "autoarc",
     about = "Concurrent multi-format archive extractor with password trial-and-error",
-    version
+    version,
+    // Bare `autoarc` with no args / subcommand prints help instead of erroring.
+    arg_required_else_help = true,
+    // `autoarc <DIR>` works without naming a subcommand; `autoarc type FILE`
+    // dispatches to the subcommand. When a subcommand is present the top-level
+    // flags/args are ignored.
+    subcommand_negates_reqs = true,
 )]
 pub struct Args {
+    /// Directory to scan for archives.
+    ///
+    /// Required unless a subcommand (`type`, `lsar`, …) is used.
+    pub dir: Option<PathBuf>,
+
+    /// Maximum directory depth to scan for archives.
+    ///
+    /// `1` (the default) only inspects the immediate contents of `dir`.
+    /// `2` also enters direct subdirectories, and so on. A value of `0`
+    /// is treated the same as `--recursive`.
+    #[arg(short, long, default_value_t = 1)]
+    pub depth: usize,
+
+    /// Shortcut for unlimited recursion (overrides `--depth`).
+    #[arg(short, long, default_value_t = false)]
+    pub recursive: bool,
+
+    /// Print the extraction plan and exit without touching the filesystem.
+    #[arg(short = 'n', long, default_value_t = false)]
+    pub dry_run: bool,
+
+    /// Skip the interactive confirmation prompt (assume "yes").
+    ///
+    /// Has no effect when stdin is not a TTY — in that case no prompt is
+    /// shown and execution always proceeds.
+    #[arg(short, long, default_value_t = false)]
+    pub yes: bool,
+
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
-/// Available subcommands.
+/// Introspection subcommands. The main extraction flow lives at the top level.
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Print the detected archive/video file type for a single file.
@@ -23,33 +62,4 @@ pub enum Commands {
 
     /// Run `lsar` against a single archive and print its entry list.
     Lsar { filepath: PathBuf },
-
-    /// Recursively unpack every supported archive in `dir`.
-    Autoarc {
-        /// Directory to scan for archives.
-        dir: PathBuf,
-
-        /// Maximum directory depth to scan for archives.
-        ///
-        /// `1` (the default) only inspects the immediate contents of `dir`.
-        /// `2` also enters direct subdirectories, and so on. A value of `0`
-        /// is treated the same as `--recursive`.
-        #[arg(short, long, default_value_t = 1)]
-        depth: usize,
-
-        /// Shortcut for unlimited recursion (overrides `--depth`).
-        #[arg(short, long, default_value_t = false)]
-        recursive: bool,
-
-        /// Print the extraction plan and exit without touching the filesystem.
-        #[arg(short = 'n', long, default_value_t = false)]
-        dry_run: bool,
-
-        /// Skip the interactive confirmation prompt (assume "yes").
-        ///
-        /// Has no effect when stdin is not a TTY — in that case no prompt is
-        /// shown and execution always proceeds.
-        #[arg(short, long, default_value_t = false)]
-        yes: bool,
-    },
 }

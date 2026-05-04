@@ -70,22 +70,22 @@ cp .env.example .env
 
 ```bash
 # Extract every supported archive in <DIR> (top level only)
-autoarc autoarc <DIR>
+autoarc <DIR>
 
 # Recurse into subdirectories up to N levels
-autoarc autoarc <DIR> --depth 3
+autoarc <DIR> --depth 3
 
 # Recurse without limit
-autoarc autoarc <DIR> --recursive
-autoarc autoarc <DIR> -r
+autoarc <DIR> --recursive
+autoarc <DIR> -r
 
 # Preview the plan without touching anything (dry-run)
-autoarc autoarc <DIR> --dry-run
-autoarc autoarc <DIR> -n
+autoarc <DIR> --dry-run
+autoarc <DIR> -n
 
 # Skip the interactive [y/N] confirmation prompt
-autoarc autoarc <DIR> --yes
-autoarc autoarc <DIR> -y
+autoarc <DIR> --yes
+autoarc <DIR> -y
 
 # Inspect a single file's detected type
 autoarc type ./mystery.bin
@@ -158,7 +158,7 @@ just check         # one-shot: fmt-check + lint + release build
 
 ## Behaviour
 
-Given `autoarc autoarc /tmp/in` (default `--depth 1`):
+Given `autoarc /tmp/in` (default `--depth 1`):
 
 ```
 /tmp/in/
