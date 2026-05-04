@@ -28,6 +28,8 @@ async fn main() -> Result<()> {
             dir,
             depth,
             recursive,
+            dry_run,
+            yes,
         } => {
             // `--recursive` and `--depth 0` both mean "no limit".
             let max_depth = if recursive || depth == 0 {
@@ -35,7 +37,7 @@ async fn main() -> Result<()> {
             } else {
                 depth
             };
-            autoarc::runner::run(dir, max_depth).await?
+            autoarc::runner::run(dir, max_depth, dry_run, yes).await?
         }
     }
 

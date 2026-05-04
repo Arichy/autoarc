@@ -54,12 +54,42 @@ impl TaskParams {
 /// `usize::MAX` means unlimited. Note that this only affects the **initial**
 /// scan: any nested archives produced by extraction itself are always queued
 /// recursively regardless of `max_depth`.
-pub async fn run(dir: PathBuf, max_depth: usize) -> Result<()> {
-    let initial_tasks = prepare_archives(&dir, max_depth)?;
+///
+/// `dry_run` prints the planned work and exits without touching the filesystem.
+/// `yes` skips the interactive `[y/N]` confirmation prompt (the prompt is also
+/// skipped automatically when stdin is not a TTY, e.g. in CI).
+pub async fn run(dir: PathBuf, max_depth: usize, dry_run: bool, yes: bool) -> Result<()> {
+    use std::io::IsTerminal;
+
+    // Phase 1 — scan: pure read pass, classifies every file.
+    let scan_result = scan(&dir, max_depth)?;
+
+    // Phase 2 — plan: fuse multi-volume parts into single logical entries.
+    let plan = build_plan(scan_result.archives);
+
+    if plan.is_empty() && scan_result.videos.is_empty() {
+        println!("No archives or videos found in {}", dir.display());
+        return Ok(());
+    }
+
+    // Phase 3 — render: show the user what will happen.
+    print_plan(&plan, &scan_result.videos, &dir, max_depth);
+
+    if dry_run {
+        return Ok(());
+    }
+
+    if !yes && std::io::stdin().is_terminal() && !prompt_continue()? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    // Phase 4 — execute: do the moves and produce TaskParams.
+    let initial_tasks = execute(plan, scan_result.videos, &dir, max_depth)?;
     debug!("initial tasks: {initial_tasks:?}");
 
     if initial_tasks.is_empty() {
-        println!("No archives found in {}", dir.display());
+        // All work was video renames; nothing left to extract.
         return Ok(());
     }
 
@@ -181,36 +211,42 @@ fn spawn_task(
     });
 }
 
-/// Walk the requested depth of `target_dir`, sorting files into archives,
-/// videos, or noise.
+// ============================================================================
+// Phase 1: scan — pure read pass that classifies files without touching them.
+// ============================================================================
+
+/// One archive file discovered during the scan.
+#[derive(Debug, Clone)]
+struct ScanItem {
+    path: PathBuf,
+    #[allow(dead_code)] // kept for future kind-aware grouping; currently re-derived at execute time.
+    kind: FileType,
+}
+
+/// Outcome of [`scan`]: archives that need extraction + videos that need a rename.
+struct ScanResult {
+    archives: Vec<ScanItem>,
+    videos: Vec<(PathBuf, FileType)>,
+}
+
+/// Walk `target_dir` (respecting `max_depth`) and classify every file.
 ///
-/// At `max_depth == 1` the historical behaviour is preserved: archives are
-/// copied to today's `MM-DD_bak/` and moved into today's `MM-DD/` working
-/// folder. For deeper scans the date-folder ritual is skipped and archives are
-/// processed in place, with our own `_out` / `MM-DD*` artefact directories
-/// pruned from the walk so we never re-process previous output.
-fn prepare_archives(target_dir: &Path, max_depth: usize) -> Result<Vec<TaskParams>> {
+/// This pass performs **no filesystem mutations** so it is safe to run in
+/// dry-run mode and to surface to the user for confirmation.
+fn scan(target_dir: &Path, max_depth: usize) -> Result<ScanResult> {
     if max_depth <= 1 {
-        prepare_top_level(target_dir)
+        scan_top_level(target_dir)
     } else {
-        prepare_recursive(target_dir, max_depth)
+        scan_recursive(target_dir, max_depth)
     }
 }
 
-/// Original behaviour: scan only the top level, move archives into
-/// `MM-DD/` and back them up under `MM-DD_bak/`.
-fn prepare_top_level(target_dir: &Path) -> Result<Vec<TaskParams>> {
-    let today = today_dir_name(target_dir);
-    if !today.exists() {
-        std::fs::create_dir(&today).map_err(|e| AutoarcError::io(today.clone(), e))?;
-    }
-
-    let bak = today_bak_dir_name(target_dir);
-    if !bak.exists() {
-        std::fs::create_dir(&bak).map_err(|e| AutoarcError::io(bak.clone(), e))?;
-    }
-
-    let mut tasks = Vec::new();
+/// Top-level scan: only the immediate contents of `target_dir`.
+fn scan_top_level(target_dir: &Path) -> Result<ScanResult> {
+    let mut result = ScanResult {
+        archives: Vec::new(),
+        videos: Vec::new(),
+    };
 
     let entries = std::fs::read_dir(target_dir)
         .map_err(|e| AutoarcError::io(target_dir.to_path_buf(), e))?;
@@ -219,57 +255,26 @@ fn prepare_top_level(target_dir: &Path) -> Result<Vec<TaskParams>> {
         if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
             continue;
         }
-
-        let filepath = entry.path();
-        let kind = get_file_type(&filepath);
-
+        let path = entry.path();
+        let kind = get_file_type(&path);
         if is_type_archive(kind) {
-            // Multi-volume archives mustn't be moved (their `.z02`, `.z03` siblings
-            // live next to the first part), so keep them in place and queue directly.
-            if kind == FileType::Multi {
-                tasks.push(TaskParams {
-                    archive_path: filepath.clone(),
-                    root: filepath,
-                });
-                continue;
-            }
+            result.archives.push(ScanItem { path, kind });
         } else if is_type_video(kind) {
-            rename_video(&filepath, kind)?;
-            continue;
-        } else {
-            continue;
+            result.videos.push((path, kind));
         }
-
-        let filename = filepath
-            .file_name()
-            .ok_or_else(|| AutoarcError::Other(format!("missing file name: {filepath:?}")))?;
-        let new_path = today.join(filename);
-        let bak_path = bak.join(filename);
-
-        std::fs::copy(&filepath, &bak_path).map_err(|e| AutoarcError::io(bak_path.clone(), e))?;
-        std::fs::rename(&filepath, &new_path).map_err(|e| AutoarcError::io(new_path.clone(), e))?;
-
-        tasks.push(TaskParams {
-            archive_path: new_path.clone(),
-            root: new_path,
-        });
     }
-
-    Ok(tasks)
+    Ok(result)
 }
 
-/// Recursive scan: walk up to `max_depth` directory levels, leaving archives
-/// where they were found and emitting them as tasks directly.
-///
-/// Three categories of directory are pruned from the walk to avoid feedback
-/// loops with previous runs:
-///   * `*_out` — extraction output of any prior archive
-///   * `MM-DD` — today's (or any past day's) working directory
-///   * `MM-DD_bak` — today's (or any past day's) backup directory
-fn prepare_recursive(target_dir: &Path, max_depth: usize) -> Result<Vec<TaskParams>> {
+/// Recursive scan: walk up to `max_depth` directory levels, pruning our own
+/// `*_out` / `MM-DD` / `MM-DD_bak` artefact directories from the walk.
+fn scan_recursive(target_dir: &Path, max_depth: usize) -> Result<ScanResult> {
     use walkdir::WalkDir;
 
-    let mut tasks = Vec::new();
+    let mut result = ScanResult {
+        archives: Vec::new(),
+        videos: Vec::new(),
+    };
 
     let walker = WalkDir::new(target_dir)
         .max_depth(max_depth)
@@ -292,21 +297,333 @@ fn prepare_recursive(target_dir: &Path, max_depth: usize) -> Result<Vec<TaskPara
         if !entry.file_type().is_file() {
             continue;
         }
-
-        let filepath = entry.into_path();
-        let kind = get_file_type(&filepath);
-
+        let path = entry.into_path();
+        let kind = get_file_type(&path);
         if is_type_archive(kind) {
-            tasks.push(TaskParams {
-                archive_path: filepath.clone(),
-                root: filepath,
-            });
+            result.archives.push(ScanItem { path, kind });
         } else if is_type_video(kind) {
-            rename_video(&filepath, kind)?;
+            result.videos.push((path, kind));
+        }
+    }
+    Ok(result)
+}
+
+// ============================================================================
+// Phase 2: plan — group multi-volume parts into single logical entries.
+// ============================================================================
+
+/// One row in the user-facing extraction plan.
+#[derive(Debug, Clone)]
+struct PlanItem {
+    /// The path that will be passed to the extractor (e.g. the `.z01` for
+    /// ZIP multi-volume sets).
+    primary: PathBuf,
+    /// All filesystem files belonging to this logical archive (≥ 1).
+    parts: Vec<PathBuf>,
+    /// Total bytes across all `parts`.
+    total_size: u64,
+    /// True when `parts.len() > 1` — the archive spans multiple volume files.
+    is_multi_volume: bool,
+}
+
+/// Group scan items into plan items, fusing multi-volume sets into a single
+/// row and de-duplicating sibling parts that the scan classified independently
+/// (e.g. both `foo.zip` and `foo.z01` showing up as separate ScanItems).
+fn build_plan(archives: Vec<ScanItem>) -> Vec<PlanItem> {
+    use std::collections::HashSet;
+
+    let mut absorbed: HashSet<PathBuf> = HashSet::new();
+    let mut plan = Vec::new();
+
+    // Sort for deterministic plan output.
+    let mut sorted = archives;
+    sorted.sort_by(|a, b| a.path.cmp(&b.path));
+
+    for item in &sorted {
+        if absorbed.contains(&item.path) {
+            continue;
+        }
+
+        if let Some(parts) = discover_volume_parts(&item.path) {
+            // Pick the primary the runtime should hand to the extractor.
+            // Preference order: .z01 > .001 > .zip > whatever sorted first.
+            let primary = parts
+                .iter()
+                .find(|p| has_ext(p, "z01"))
+                .or_else(|| parts.iter().find(|p| has_ext(p, "001")))
+                .or_else(|| parts.iter().find(|p| has_ext(p, "zip")))
+                .cloned()
+                .unwrap_or_else(|| parts[0].clone());
+            let total_size: u64 = parts
+                .iter()
+                .filter_map(|p| std::fs::metadata(p).ok().map(|m| m.len()))
+                .sum();
+            for p in &parts {
+                absorbed.insert(p.clone());
+            }
+            plan.push(PlanItem {
+                primary,
+                parts,
+                total_size,
+                is_multi_volume: true,
+            });
+        } else {
+            let size = std::fs::metadata(&item.path).map(|m| m.len()).unwrap_or(0);
+            absorbed.insert(item.path.clone());
+            plan.push(PlanItem {
+                primary: item.path.clone(),
+                parts: vec![item.path.clone()],
+                total_size: size,
+                is_multi_volume: false,
+            });
         }
     }
 
+    plan
+}
+
+/// If `primary` looks like one part of a multi-volume set, scan its parent
+/// directory for siblings and return the full part list (including `primary`).
+///
+/// Returns `None` for solo archives (the caller should treat them as standalone).
+fn discover_volume_parts(primary: &Path) -> Option<Vec<PathBuf>> {
+    let parent = primary.parent()?;
+    let name = primary.file_name()?.to_str()?;
+    let lower = name.to_ascii_lowercase();
+
+    // ZIP-style multi-volume: foo.zip + foo.z01 + foo.z02 + ... + foo.zNN.
+    let zip_stem_len = lower
+        .strip_suffix(".zip")
+        .or_else(|| lower.strip_suffix(".z01"))
+        .map(|s| s.len());
+    if let Some(stem_len) = zip_stem_len {
+        let stem_orig = &name[..stem_len];
+        let mut parts = Vec::new();
+        let zip_path = parent.join(format!("{stem_orig}.zip"));
+        if zip_path.exists() {
+            parts.push(zip_path);
+        }
+        for n in 1..=99 {
+            let z = parent.join(format!("{stem_orig}.z{n:02}"));
+            if z.exists() {
+                parts.push(z);
+            } else if n > 1 {
+                break;
+            }
+        }
+        if parts.len() > 1 {
+            return Some(parts);
+        }
+    }
+
+    // Generic numeric splits: foo.001 + foo.002 + ..., or foo.7z.001 + foo.7z.002 + ...
+    if let Some(stem_len) = lower.strip_suffix(".001").map(|s| s.len()) {
+        let stem_orig = &name[..stem_len];
+        let mut parts = Vec::new();
+        for n in 1..=999 {
+            let p = parent.join(format!("{stem_orig}.{n:03}"));
+            if p.exists() {
+                parts.push(p);
+            } else if n > 1 {
+                break;
+            }
+        }
+        if parts.len() > 1 {
+            return Some(parts);
+        }
+    }
+
+    None
+}
+
+/// Case-insensitive extension check.
+fn has_ext(path: &Path, ext: &str) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+}
+
+// ============================================================================
+// Phase 3: render — print the plan and (optionally) prompt the user.
+// ============================================================================
+
+/// Print a human-readable extraction plan to stdout.
+fn print_plan(
+    plan: &[PlanItem],
+    videos: &[(PathBuf, FileType)],
+    dir: &Path,
+    max_depth: usize,
+) {
+    use console::style;
+    use indicatif::HumanBytes;
+
+    let multi_count = plan.iter().filter(|p| p.is_multi_volume).count();
+    let total_bytes: u64 = plan.iter().map(|p| p.total_size).sum();
+    let depth_note = if max_depth == usize::MAX {
+        "recursive".to_string()
+    } else {
+        format!("depth={max_depth}")
+    };
+
+    println!(
+        "{} {} archives ({} multi-volume), {} total \u{2014} {} ({})",
+        style("Plan:").bold().cyan(),
+        plan.len(),
+        multi_count,
+        HumanBytes(total_bytes),
+        dir.display(),
+        depth_note,
+    );
+
+    let max_label = plan
+        .iter()
+        .map(|p| relative_path(dir, &p.primary).to_string_lossy().chars().count())
+        .max()
+        .unwrap_or(0);
+
+    for item in plan {
+        let kind_tag = match get_file_type(&item.primary) {
+            FileType::Zip => "zip",
+            FileType::Rar => "rar",
+            FileType::SevenZ => "7z",
+            FileType::Multi => "multi",
+            _ => "?",
+        };
+        let rel = relative_path(dir, &item.primary);
+        let label = rel.to_string_lossy();
+        let pad = max_label.saturating_sub(label.chars().count());
+        let spacer = " ".repeat(pad);
+        let suffix = if item.is_multi_volume {
+            format!(", {} parts", item.parts.len())
+        } else {
+            String::new()
+        };
+        println!(
+            "  [{:<5}] {}{}  ({}{})",
+            style(kind_tag).yellow(),
+            label,
+            spacer,
+            HumanBytes(item.total_size),
+            suffix,
+        );
+    }
+
+    if !videos.is_empty() {
+        println!(
+            "\n{} {} video file(s) will be renamed in place.",
+            style("Note:").dim(),
+            videos.len()
+        );
+    }
+    println!();
+}
+
+/// Read a y/N answer from stdin. Returns `Ok(true)` only when the user typed
+/// `y` or `yes` (case-insensitive). Anything else (including just pressing
+/// Enter) defaults to `false`.
+fn prompt_continue() -> Result<bool> {
+    use std::io::{BufRead, Write};
+
+    print!("Continue? [y/N] ");
+    std::io::stdout()
+        .flush()
+        .map_err(|e| AutoarcError::Other(format!("flush stdout: {e}")))?;
+
+    let mut buf = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut buf)
+        .map_err(|e| AutoarcError::Other(format!("read stdin: {e}")))?;
+
+    Ok(matches!(
+        buf.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+// ============================================================================
+// Phase 4: execute — mutate the filesystem and produce TaskParams.
+// ============================================================================
+
+/// Apply the plan: move/back-up archives as appropriate, rename videos, and
+/// emit one [`TaskParams`] per logical archive for the runner to consume.
+fn execute(
+    plan: Vec<PlanItem>,
+    videos: Vec<(PathBuf, FileType)>,
+    dir: &Path,
+    max_depth: usize,
+) -> Result<Vec<TaskParams>> {
+    let tasks = if max_depth <= 1 {
+        execute_top_level(plan, dir)?
+    } else {
+        execute_recursive(plan)
+    };
+
+    for (path, kind) in videos {
+        rename_video(&path, kind)?;
+    }
+
     Ok(tasks)
+}
+
+/// Top-level mode (depth=1): copy each non-multi archive to `MM-DD_bak/` and
+/// move it to `MM-DD/`. Multi-volume entries (and any solo `FileType::Multi`)
+/// are kept in place so their sibling parts remain reachable.
+fn execute_top_level(plan: Vec<PlanItem>, dir: &Path) -> Result<Vec<TaskParams>> {
+    let today = today_dir_name(dir);
+    if !today.exists() {
+        std::fs::create_dir(&today).map_err(|e| AutoarcError::io(today.clone(), e))?;
+    }
+
+    let bak = today_bak_dir_name(dir);
+    if !bak.exists() {
+        std::fs::create_dir(&bak).map_err(|e| AutoarcError::io(bak.clone(), e))?;
+    }
+
+    let mut tasks = Vec::new();
+    for item in plan {
+        let primary_kind = get_file_type(&item.primary);
+
+        // Multi-volume sets and standalone Multi-classified files stay in place;
+        // moving them would orphan their sibling parts.
+        if item.is_multi_volume || primary_kind == FileType::Multi {
+            tasks.push(TaskParams {
+                archive_path: item.primary.clone(),
+                root: item.primary,
+            });
+            continue;
+        }
+
+        // Solo single-file archive: copy to _bak, move to today's dir.
+        let filename = item
+            .primary
+            .file_name()
+            .ok_or_else(|| AutoarcError::Other(format!("missing file name: {:?}", item.primary)))?;
+        let new_path = today.join(filename);
+        let bak_path = bak.join(filename);
+
+        std::fs::copy(&item.primary, &bak_path)
+            .map_err(|e| AutoarcError::io(bak_path.clone(), e))?;
+        std::fs::rename(&item.primary, &new_path)
+            .map_err(|e| AutoarcError::io(new_path.clone(), e))?;
+
+        tasks.push(TaskParams {
+            archive_path: new_path.clone(),
+            root: new_path,
+        });
+    }
+
+    Ok(tasks)
+}
+
+/// Recursive mode (depth>1): no movement, just emit one task per plan item.
+fn execute_recursive(plan: Vec<PlanItem>) -> Vec<TaskParams> {
+    plan.into_iter()
+        .map(|item| TaskParams {
+            archive_path: item.primary.clone(),
+            root: item.primary,
+        })
+        .collect()
 }
 
 /// Recognise our own output / backup / working directories so the recursive

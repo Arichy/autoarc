@@ -4,5 +4,15 @@
 *.7z
 *.zip
 *.z01
+*.z02
+*.z03
+*.001
 *.mov
+*.mp4
+*.ts
 .env
+
+# local test fixtures / scratch directories
+/test-dir/
+/archives/
+/scratch/

@@ -40,5 +40,16 @@ pub enum Commands {
         /// Shortcut for unlimited recursion (overrides `--depth`).
         #[arg(short, long, default_value_t = false)]
         recursive: bool,
+
+        /// Print the extraction plan and exit without touching the filesystem.
+        #[arg(short = 'n', long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Skip the interactive confirmation prompt (assume "yes").
+        ///
+        /// Has no effect when stdin is not a TTY — in that case no prompt is
+        /// shown and execution always proceeds.
+        #[arg(short, long, default_value_t = false)]
+        yes: bool,
     },
 }

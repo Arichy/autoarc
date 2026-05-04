@@ -79,6 +79,14 @@ autoarc autoarc <DIR> --depth 3
 autoarc autoarc <DIR> --recursive
 autoarc autoarc <DIR> -r
 
+# Preview the plan without touching anything (dry-run)
+autoarc autoarc <DIR> --dry-run
+autoarc autoarc <DIR> -n
+
+# Skip the interactive [y/N] confirmation prompt
+autoarc autoarc <DIR> --yes
+autoarc autoarc <DIR> -y
+
 # Inspect a single file's detected type
 autoarc type ./mystery.bin
 
@@ -94,6 +102,31 @@ autoarc lsar ./bundle.zip
 | `--depth N` / `-d N`    | Walk up to `N` directory levels (`N ≥ 1`)                  |
 | `--depth 0`             | Unlimited recursion (alias for `--recursive`)               |
 | `--recursive` / `-r`    | Unlimited recursion                                         |
+
+#### Plan preview & confirmation
+
+Before extracting, autoarc prints an extraction plan:
+
+```
+Plan: 5 archives (2 multi-volume), 12.4 GiB total — /tmp/in (depth=3)
+  [zip  ] movie.zip                           (1.2 GiB)
+  [multi] big.z01                             (8.1 GiB, 2 parts)
+  [rar  ] sub/photos.rar                      (340.0 MiB)
+  [7z   ] sub/data.7z                         (980.0 MiB)
+  [multi] sub/seven.7z.001                    (2.4 GiB, 3 parts)
+
+Note: 4 video file(s) will be renamed in place.
+
+Continue? [y/N]
+```
+
+- **Multi-volume archives** (`foo.z01` + `foo.zip` + `foo.z02`…, or
+  `foo.7z.001` + `foo.7z.002`…) are fused into a single plan row with a
+  `N parts` annotation, so each logical archive shows up exactly once.
+- `--dry-run` (`-n`) prints the plan and exits without modifying anything.
+- `--yes` (`-y`) skips the prompt; useful for automation.
+- The prompt is **automatically skipped when stdin is not a TTY** (e.g. when
+  the output is piped or run in CI), so existing scripts keep working.
 
 When `depth == 1` (the default), top-level archives are first **moved into
 `<DIR>/MM-DD/` and copied into `<DIR>/MM-DD_bak/`** for safety.
@@ -111,6 +144,8 @@ just run                                # uses default ./archives
 just run /path/to/archives              # custom dir, depth=1
 just run /path/to/archives -r           # custom dir, unlimited recursion
 just run /path/to/archives -d 3         # custom dir, depth=3
+just run /path/to/archives -n           # dry-run preview
+just run /path/to/archives -y           # skip confirmation
 just debug /path/to/archives -r         # same with RUST_LOG=debug
 just type ./mystery.bin
 ```
