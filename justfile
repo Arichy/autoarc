@@ -16,3 +16,20 @@ debug dir="./archives" *args="":
 
 type FILE:
   cargo run --release -- type {{FILE}}
+
+# Format every Rust source file in place using rustfmt defaults.
+fmt:
+  cargo fmt --all
+
+# Verify the codebase is rustfmt-clean (non-zero exit if any diff).
+# Suitable for CI / pre-commit hooks.
+fmt-check:
+  cargo fmt --all -- --check
+
+# Strict clippy run — promotes every warning to an error.
+lint:
+  cargo clippy --all-targets --release -- -D warnings
+
+# Aggregate "is this PR ready?" check: format + lint + build.
+check: fmt-check lint
+  cargo build --release

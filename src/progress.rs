@@ -66,10 +66,8 @@ impl Reporter {
         let label = label.into();
         let bar = self.multi.add(ProgressBar::new_spinner());
         bar.set_style(
-            ProgressStyle::with_template(
-                "{prefix:>10.yellow} {spinner:.green} {wide_msg}",
-            )
-            .expect("valid task spinner template"),
+            ProgressStyle::with_template("{prefix:>10.yellow} {spinner:.green} {wide_msg}")
+                .expect("valid task spinner template"),
         );
         bar.set_prefix("Task");
         bar.set_message(label.clone());
@@ -101,12 +99,9 @@ impl Reporter {
             s.failed += 1;
         }
         self.overall.inc(1);
-        let _ = self.multi.println(format!(
-            "{} {}: {}",
-            style("FAIL").red().bold(),
-            label,
-            err
-        ));
+        let _ = self
+            .multi
+            .println(format!("{} {}: {}", style("FAIL").red().bold(), label, err));
     }
 
     /// Increment the renamed-video counter (used by extractors).
@@ -124,7 +119,11 @@ impl Reporter {
     /// Stop the bars and print a coloured summary table.
     pub fn finish_summary(self) {
         self.overall.finish_and_clear();
-        let stats = self.stats.lock().map(|g| (*g).clone_into_owned()).unwrap_or_default();
+        let stats = self
+            .stats
+            .lock()
+            .map(|g| (*g).clone_into_owned())
+            .unwrap_or_default();
         let elapsed = self.started_at.elapsed();
 
         let label = Style::new().bold();

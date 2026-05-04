@@ -18,11 +18,7 @@ use super::{ExtractOutcome, Extractor};
 pub struct SevenzExtractor;
 
 impl Extractor for SevenzExtractor {
-    fn try_extract(
-        path: &Path,
-        password: &str,
-        reporter: &TaskReporter,
-    ) -> Result<ExtractOutcome> {
+    fn try_extract(path: &Path, password: &str, reporter: &TaskReporter) -> Result<ExtractOutcome> {
         debug!("[7z] try_extract {path:?}");
         match check_password(path, password) {
             Ok(true) => {}
@@ -66,8 +62,8 @@ fn sevenz_with_password(
     password: &str,
     reporter: &TaskReporter,
 ) -> Result<Vec<PathBuf>> {
-    let file = File::open(archive_path)
-        .map_err(|e| AutoarcError::io(archive_path.to_path_buf(), e))?;
+    let file =
+        File::open(archive_path).map_err(|e| AutoarcError::io(archive_path.to_path_buf(), e))?;
     let pwd: Password = password.into();
     let mut reader = ArchiveReader::new(file, pwd)?;
 
@@ -101,8 +97,7 @@ fn sevenz_with_password(
                 }
             } else if is_type_video(kind) {
                 // Bubble the video-rename error up via the closure's io::Error channel.
-                rename_video(&outpath, kind)
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
+                rename_video(&outpath, kind).map_err(|e| std::io::Error::other(e.to_string()))?;
                 reporter.note_video_renamed();
             }
         }

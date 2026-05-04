@@ -17,11 +17,7 @@ use super::{ExtractOutcome, Extractor};
 pub struct UnarExtractor;
 
 impl Extractor for UnarExtractor {
-    fn try_extract(
-        path: &Path,
-        password: &str,
-        reporter: &TaskReporter,
-    ) -> Result<ExtractOutcome> {
+    fn try_extract(path: &Path, password: &str, reporter: &TaskReporter) -> Result<ExtractOutcome> {
         debug!("[unar] try_extract {path:?}");
 
         let basename = path

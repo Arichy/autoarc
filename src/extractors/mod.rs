@@ -35,11 +35,7 @@ pub trait Extractor {
     /// Implementations are responsible for translating their format-specific
     /// "wrong password" error into [`ExtractOutcome::BadPassword`]; any other
     /// error is propagated as `Err`.
-    fn try_extract(
-        path: &Path,
-        password: &str,
-        reporter: &TaskReporter,
-    ) -> Result<ExtractOutcome>;
+    fn try_extract(path: &Path, password: &str, reporter: &TaskReporter) -> Result<ExtractOutcome>;
 }
 
 /// Drive an [`Extractor`] over the full password list.

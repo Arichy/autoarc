@@ -148,6 +148,12 @@ just run /path/to/archives -n           # dry-run preview
 just run /path/to/archives -y           # skip confirmation
 just debug /path/to/archives -r         # same with RUST_LOG=debug
 just type ./mystery.bin
+
+# Development helpers
+just fmt           # apply rustfmt to every source file
+just fmt-check     # verify the tree is rustfmt-clean (CI-friendly)
+just lint          # strict clippy: every warning is an error
+just check         # one-shot: fmt-check + lint + release build
 ```
 
 ## Behaviour

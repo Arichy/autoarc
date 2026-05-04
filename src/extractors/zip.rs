@@ -18,11 +18,7 @@ use super::{ExtractOutcome, Extractor};
 pub struct ZipExtractor;
 
 impl Extractor for ZipExtractor {
-    fn try_extract(
-        path: &Path,
-        password: &str,
-        reporter: &TaskReporter,
-    ) -> Result<ExtractOutcome> {
+    fn try_extract(path: &Path, password: &str, reporter: &TaskReporter) -> Result<ExtractOutcome> {
         debug!("[zip] try_extract {path:?}");
         match check_password(path, password.as_bytes()) {
             Ok(()) => {}
@@ -60,8 +56,8 @@ fn unzip_with_password(
     password: &str,
     reporter: &TaskReporter,
 ) -> Result<Vec<PathBuf>> {
-    let file = File::open(archive_path)
-        .map_err(|e| AutoarcError::io(archive_path.to_path_buf(), e))?;
+    let file =
+        File::open(archive_path).map_err(|e| AutoarcError::io(archive_path.to_path_buf(), e))?;
     let mut archive = ZipArchive::new(file)?;
 
     reporter.set_length(archive.len() as u64);
@@ -93,10 +89,8 @@ fn unzip_with_password(
             fs::create_dir_all(parent).context("create parent dir")?;
         }
 
-        let mut out = File::create(&outpath)
-            .map_err(|e| AutoarcError::io(outpath.clone(), e))?;
-        io::copy(&mut entry, &mut out)
-            .map_err(|e| AutoarcError::io(outpath.clone(), e))?;
+        let mut out = File::create(&outpath).map_err(|e| AutoarcError::io(outpath.clone(), e))?;
+        io::copy(&mut entry, &mut out).map_err(|e| AutoarcError::io(outpath.clone(), e))?;
 
         reporter.set_message(filename.to_string_lossy().into_owned());
         reporter.inc();

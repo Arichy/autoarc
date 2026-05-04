@@ -24,10 +24,7 @@ pub fn rename_video(path: &Path, file_type: FileType) -> Result<(), AutoarcError
     }
 
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("video");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
     let new_path = parent.join(format!("{stem}.{target_ext}"));
 
     std::fs::rename(path, &new_path).map_err(|e| AutoarcError::io(path.to_path_buf(), e))?;

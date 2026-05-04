@@ -219,7 +219,8 @@ fn spawn_task(
 #[derive(Debug, Clone)]
 struct ScanItem {
     path: PathBuf,
-    #[allow(dead_code)] // kept for future kind-aware grouping; currently re-derived at execute time.
+    #[allow(dead_code)]
+    // kept for future kind-aware grouping; currently re-derived at execute time.
     kind: FileType,
 }
 
@@ -248,8 +249,8 @@ fn scan_top_level(target_dir: &Path) -> Result<ScanResult> {
         videos: Vec::new(),
     };
 
-    let entries = std::fs::read_dir(target_dir)
-        .map_err(|e| AutoarcError::io(target_dir.to_path_buf(), e))?;
+    let entries =
+        std::fs::read_dir(target_dir).map_err(|e| AutoarcError::io(target_dir.to_path_buf(), e))?;
     for entry in entries {
         let entry = entry.map_err(|e| AutoarcError::io(target_dir.to_path_buf(), e))?;
         if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
@@ -291,9 +292,8 @@ fn scan_recursive(target_dir: &Path, max_depth: usize) -> Result<ScanResult> {
         });
 
     for entry in walker {
-        let entry = entry.map_err(|e| {
-            AutoarcError::Other(format!("walkdir error under {target_dir:?}: {e}"))
-        })?;
+        let entry = entry
+            .map_err(|e| AutoarcError::Other(format!("walkdir error under {target_dir:?}: {e}")))?;
         if !entry.file_type().is_file() {
             continue;
         }
@@ -448,12 +448,7 @@ fn has_ext(path: &Path, ext: &str) -> bool {
 // ============================================================================
 
 /// Print a human-readable extraction plan to stdout.
-fn print_plan(
-    plan: &[PlanItem],
-    videos: &[(PathBuf, FileType)],
-    dir: &Path,
-    max_depth: usize,
-) {
+fn print_plan(plan: &[PlanItem], videos: &[(PathBuf, FileType)], dir: &Path, max_depth: usize) {
     use console::style;
     use indicatif::HumanBytes;
 
@@ -477,7 +472,12 @@ fn print_plan(
 
     let max_label = plan
         .iter()
-        .map(|p| relative_path(dir, &p.primary).to_string_lossy().chars().count())
+        .map(|p| {
+            relative_path(dir, &p.primary)
+                .to_string_lossy()
+                .chars()
+                .count()
+        })
         .max()
         .unwrap_or(0);
 

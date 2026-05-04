@@ -18,11 +18,7 @@ use super::{ExtractOutcome, Extractor};
 pub struct RarExtractor;
 
 impl Extractor for RarExtractor {
-    fn try_extract(
-        path: &Path,
-        password: &str,
-        reporter: &TaskReporter,
-    ) -> Result<ExtractOutcome> {
+    fn try_extract(path: &Path, password: &str, reporter: &TaskReporter) -> Result<ExtractOutcome> {
         debug!("[rar] try_extract {path:?}");
         match check_password(path, password.as_bytes()) {
             Ok(()) => {}
