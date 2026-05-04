@@ -1,0 +1,8 @@
+/target
+.DS_Store
+*.rar
+*.7z
+*.zip
+*.z01
+*.mov
+.env

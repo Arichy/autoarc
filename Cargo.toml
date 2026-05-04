@@ -1,0 +1,19 @@
+[package]
+name = "autoarc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = "0.4.42"
+infer = "0.19.0"
+sevenz-rust2 = { version = "0.19.1", features = ["aes256", "deflate"] }
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["full"] }
+unrar = "0.5.8"
+zip = "6.0.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4.5.49", features = ["derive"] }
+pathdiff = "0.2.3"
+dotenvy = "0.15.7"
