@@ -49,19 +49,24 @@ cargo install --path .
 
 ## Configuration
 
-`autoarc` reads passwords from the `AUTOARC_PASSWORDS` environment variable
-(comma-separated). The most convenient way is a `.env` file at the project root;
-see [`.env.example`](.env.example).
+`autoarc` reads candidate passwords from the `AUTOARC_PASSWORDS` environment
+variable (comma-separated). **It's optional** — if every archive you run
+against is unencrypted, you can skip it entirely; autoarc always tries an
+empty password first so no-password archives extract cleanly without any
+configuration.
+
+For encrypted archives, the most convenient way to supply passwords is a
+`.env` file at the project root; see [`.env.example`](.env.example).
 
 ```bash
 cp .env.example .env
 # then edit .env and add your candidate passwords
 ```
 
-| Variable             | Required | Description                                                 |
-|----------------------|----------|-------------------------------------------------------------|
-| `AUTOARC_PASSWORDS`  | yes      | Comma-separated list of candidate passwords                 |
-| `RUST_LOG`           | no       | Tracing filter (`info`, `debug`, ...). Defaults to `warn`.  |
+| Variable             | Required | Description                                                                                |
+|----------------------|----------|--------------------------------------------------------------------------------------------|
+| `AUTOARC_PASSWORDS`  | no       | Comma-separated list of candidate passwords. Unset = try no-password only.                 |
+| `RUST_LOG`           | no       | Tracing filter (`info`, `debug`, ...). Defaults to `warn`.                                 |
 
 ## Usage
 

@@ -61,7 +61,7 @@ pub fn run(
     root: PathBuf,
     reporter: &TaskReporter,
 ) -> Result<Vec<TaskParams>> {
-    let passwords = get_password_list()?;
+    let passwords = get_password_list();
     let children = match file_type {
         FileType::Zip => try_with_passwords::<zip::ZipExtractor>(&path, passwords, reporter)?,
         FileType::Rar => try_with_passwords::<rar::RarExtractor>(&path, passwords, reporter)?,

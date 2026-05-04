@@ -10,14 +10,6 @@ pub enum AutoarcError {
     #[error("No correct password found for archive")]
     NoCorrectPassword,
 
-    /// The `AUTOARC_PASSWORDS` environment variable is missing or empty.
-    #[error(
-        "Missing or empty AUTOARC_PASSWORDS environment variable. \
-         Set it to a comma-separated list of candidate passwords \
-         (e.g. via a `.env` file at the project root)."
-    )]
-    MissingPasswords,
-
     /// An external CLI tool (`unar`, `lsar`, ...) is not available on `PATH`.
     #[error("External tool `{0}` not found in PATH (install via `brew install unar`)")]
     ToolNotFound(&'static str),
