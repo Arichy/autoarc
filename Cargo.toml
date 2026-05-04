@@ -17,3 +17,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4.5.49", features = ["derive"] }
 pathdiff = "0.2.3"
 dotenvy = "0.15.7"
+indicatif = "0.18.4"
+console = "0.16.3"
