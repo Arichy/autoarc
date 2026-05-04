@@ -19,3 +19,6 @@ dotenvy = "0.15.7"
 indicatif = "0.18.4"
 console = "0.16.3"
 walkdir = "2.5.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -5,7 +5,7 @@
 #   just run /path/to/archives -r     # recurse into all subdirectories
 #   just run /path/to/archives -d 3   # recurse up to 3 levels
 #   just run /path/to/archives -n     # dry-run: print plan and exit
-#   just run /path/to/archives -y     # skip the [y/N] confirmation prompt
+#   just run /path/to/archives -y     # skip the [Y/n] confirmation prompt
 #   just debug /path/to/archives      # same but with RUST_LOG=debug
 
 run dir="./archives" *args="":
@@ -30,6 +30,10 @@ fmt-check:
 lint:
   cargo clippy --all-targets --release -- -D warnings
 
-# Aggregate "is this PR ready?" check: format + lint + build.
-check: fmt-check lint
+# Run the unit test suite.
+test:
+  cargo test --lib
+
+# Aggregate "is this PR ready?" check: format + lint + tests + build.
+check: fmt-check lint test
   cargo build --release

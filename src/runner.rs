@@ -570,3 +570,268 @@ fn execute(plan: Vec<PlanItem>, videos: Vec<(PathBuf, FileType)>) -> Result<Vec<
 
     Ok(tasks)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    // --- has_ext -------------------------------------------------------------
+
+    #[test]
+    fn has_ext_is_case_insensitive() {
+        assert!(has_ext(Path::new("foo.ZIP"), "zip"));
+        assert!(has_ext(Path::new("foo.zip"), "ZIP"));
+        assert!(has_ext(Path::new("a/b/c.7Z"), "7z"));
+    }
+
+    #[test]
+    fn has_ext_rejects_mismatches_and_missing() {
+        assert!(!has_ext(Path::new("foo.rar"), "zip"));
+        assert!(!has_ext(Path::new("foo"), "zip"));
+        // `has_ext` only looks at the final extension, not suffixes.
+        assert!(!has_ext(Path::new("foo.7z.001"), "7z"));
+        assert!(has_ext(Path::new("foo.7z.001"), "001"));
+    }
+
+    // --- TaskParams::display -------------------------------------------------
+
+    #[test]
+    fn display_shows_single_label_when_archive_equals_root() {
+        let task = TaskParams {
+            archive_path: PathBuf::from("/work/foo.zip"),
+            root: PathBuf::from("/work/foo.zip"),
+        };
+        assert_eq!(task.display(Path::new("/work")), "foo.zip");
+    }
+
+    #[test]
+    fn display_shows_nested_arrow_when_descending_from_parent() {
+        let task = TaskParams {
+            archive_path: PathBuf::from("/work/foo_out/inner.7z"),
+            root: PathBuf::from("/work/foo.zip"),
+        };
+        assert_eq!(
+            task.display(Path::new("/work")),
+            "foo_out/inner.7z <- foo.zip"
+        );
+    }
+
+    // --- discover_volume_parts -----------------------------------------------
+
+    /// Create an empty file at `dir/name`.
+    fn touch(dir: &Path, name: &str) -> PathBuf {
+        let p = dir.join(name);
+        std::fs::File::create(&p).unwrap();
+        p
+    }
+
+    /// Create a file at `dir/name` with `size` bytes of zero payload.
+    fn touch_sized(dir: &Path, name: &str, size: usize) -> PathBuf {
+        let p = dir.join(name);
+        let mut f = std::fs::File::create(&p).unwrap();
+        f.write_all(&vec![0u8; size]).unwrap();
+        p
+    }
+
+    #[test]
+    fn discover_returns_none_for_solo_archive() {
+        let td = TempDir::new().unwrap();
+        let p = touch(td.path(), "solo.zip");
+        assert!(discover_volume_parts(&p).is_none());
+    }
+
+    #[test]
+    fn discover_groups_zip_plus_z01_z02() {
+        let td = TempDir::new().unwrap();
+        let zip = touch(td.path(), "multi.zip");
+        let z01 = touch(td.path(), "multi.z01");
+        let z02 = touch(td.path(), "multi.z02");
+
+        // The function only anchors on `.zip` / `.z01` (the two names that
+        // sort first in a real scan), not arbitrary `.zNN`, so we only test
+        // those two entry points.
+        for entry_point in [&zip, &z01] {
+            let parts = discover_volume_parts(entry_point).expect("should detect multi-volume");
+            assert_eq!(parts.len(), 3);
+            assert!(parts.contains(&zip));
+            assert!(parts.contains(&z01));
+            assert!(parts.contains(&z02));
+        }
+    }
+
+    #[test]
+    fn discover_groups_numeric_001_002_003() {
+        let td = TempDir::new().unwrap();
+        let a = touch(td.path(), "pack.001");
+        let b = touch(td.path(), "pack.002");
+        let c = touch(td.path(), "pack.003");
+
+        let parts = discover_volume_parts(&a).expect("should detect .001 split");
+        assert_eq!(parts, vec![a, b, c]);
+    }
+
+    #[test]
+    fn discover_groups_7z_dot_001_splits() {
+        // Regression: .7z.001 / .7z.002 must be fused so the extractor receives
+        // a single multi-volume plan item (not two separate 7z tasks).
+        let td = TempDir::new().unwrap();
+        let a = touch(td.path(), "data.7z.001");
+        let b = touch(td.path(), "data.7z.002");
+
+        let parts = discover_volume_parts(&a).expect("should detect .7z.001 split");
+        assert_eq!(parts, vec![a, b]);
+    }
+
+    #[test]
+    fn discover_handles_case_insensitive_extensions() {
+        let td = TempDir::new().unwrap();
+        // Upper-case .ZIP alongside lower-case .z01 is common on mixed systems.
+        // We only assert on the part count + filenames (case-insensitive) because
+        // the paths rebuilt by `discover_volume_parts` use the anchor's casing
+        // for the stem, which may differ textually from what `touch` returned
+        // even though they resolve to the same file on APFS/HFS+.
+        touch(td.path(), "MIX.ZIP");
+        touch(td.path(), "MIX.z01");
+
+        let entry = td.path().join("MIX.ZIP");
+        let parts = discover_volume_parts(&entry).expect("should handle upper-case .ZIP");
+        assert_eq!(parts.len(), 2);
+        let names: Vec<String> = parts
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+            })
+            .collect();
+        assert!(names.contains(&"mix.zip".to_string()));
+        assert!(names.contains(&"mix.z01".to_string()));
+    }
+
+    // --- build_plan ----------------------------------------------------------
+
+    #[test]
+    fn build_plan_sums_sizes_and_deduplicates_multi_volume_siblings() {
+        let td = TempDir::new().unwrap();
+        // 3 parts, 10 + 20 + 30 = 60 bytes total.
+        let zip = touch_sized(td.path(), "set.zip", 10);
+        let z01 = touch_sized(td.path(), "set.z01", 20);
+        let z02 = touch_sized(td.path(), "set.z02", 30);
+
+        // Scan surfaces every file individually; plan must collapse them into 1.
+        let archives = vec![
+            ScanItem {
+                path: zip.clone(),
+                kind: FileType::Zip,
+            },
+            ScanItem {
+                path: z01.clone(),
+                kind: FileType::Multi,
+            },
+            ScanItem {
+                path: z02.clone(),
+                kind: FileType::Zip,
+            },
+        ];
+
+        let plan = build_plan(archives);
+        assert_eq!(plan.len(), 1, "multi-volume parts must collapse to 1 item");
+        let item = &plan[0];
+        assert!(item.is_multi_volume);
+        assert_eq!(item.parts.len(), 3);
+        assert_eq!(item.total_size, 60);
+        // Preference order prefers .z01 as the primary handed to the extractor.
+        assert_eq!(item.primary, z01);
+    }
+
+    #[test]
+    fn build_plan_prefers_001_as_primary_for_numeric_splits() {
+        let td = TempDir::new().unwrap();
+        let a = touch_sized(td.path(), "x.001", 5);
+        let b = touch_sized(td.path(), "x.002", 5);
+
+        let plan = build_plan(vec![
+            ScanItem {
+                path: a.clone(),
+                kind: FileType::Multi,
+            },
+            ScanItem {
+                path: b.clone(),
+                kind: FileType::Multi,
+            },
+        ]);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].primary, a);
+    }
+
+    #[test]
+    fn build_plan_keeps_unrelated_archives_separate() {
+        let td = TempDir::new().unwrap();
+        let a = touch_sized(td.path(), "one.zip", 11);
+        let b = touch_sized(td.path(), "two.rar", 22);
+
+        let plan = build_plan(vec![
+            ScanItem {
+                path: a.clone(),
+                kind: FileType::Zip,
+            },
+            ScanItem {
+                path: b.clone(),
+                kind: FileType::Rar,
+            },
+        ]);
+        assert_eq!(plan.len(), 2);
+        assert!(plan.iter().all(|p| !p.is_multi_volume));
+        let total: u64 = plan.iter().map(|p| p.total_size).sum();
+        assert_eq!(total, 33);
+    }
+
+    #[test]
+    fn build_plan_treats_solo_zip_as_standalone_even_without_siblings() {
+        let td = TempDir::new().unwrap();
+        let lone = touch_sized(td.path(), "lone.zip", 7);
+
+        let plan = build_plan(vec![ScanItem {
+            path: lone.clone(),
+            kind: FileType::Zip,
+        }]);
+        assert_eq!(plan.len(), 1);
+        assert!(!plan[0].is_multi_volume);
+        assert_eq!(plan[0].parts, vec![lone]);
+    }
+
+    // --- execute -------------------------------------------------------------
+
+    #[test]
+    fn execute_emits_one_task_per_plan_item_with_primary_as_root() {
+        let td = TempDir::new().unwrap();
+        let zip = touch_sized(td.path(), "a.zip", 1);
+        let sevenz = touch_sized(td.path(), "b.7z", 1);
+
+        let plan = vec![
+            PlanItem {
+                primary: zip.clone(),
+                parts: vec![zip.clone()],
+                total_size: 1,
+                is_multi_volume: false,
+            },
+            PlanItem {
+                primary: sevenz.clone(),
+                parts: vec![sevenz.clone()],
+                total_size: 1,
+                is_multi_volume: false,
+            },
+        ];
+
+        let tasks = execute(plan, Vec::new()).unwrap();
+        assert_eq!(tasks.len(), 2);
+        // root == archive_path at the top level so display() collapses to a single label.
+        assert_eq!(tasks[0].archive_path, zip);
+        assert_eq!(tasks[0].root, zip);
+        assert_eq!(tasks[1].archive_path, sevenz);
+        assert_eq!(tasks[1].root, sevenz);
+    }
+}

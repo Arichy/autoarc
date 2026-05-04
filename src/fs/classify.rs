@@ -147,3 +147,169 @@ pub fn is_type_archive(t: FileType) -> bool {
 pub fn is_type_video(t: FileType) -> bool {
     matches!(t, FileType::Mp4 | FileType::TS)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    // --- Magic-byte fixtures -------------------------------------------------
+    const ZIP_MAGIC: &[u8] = b"PK\x03\x04";
+    const SEVENZ_MAGIC: &[u8] = &[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C];
+    const RAR4_MAGIC: &[u8] = b"Rar!\x1A\x07\x00";
+    // Just enough of a PE header for `infer` to classify the file as
+    // application/vnd.microsoft.portable-executable.
+    const PE_STUB: &[u8] = b"MZ\x90\x00";
+
+    /// Build a file named `name` inside `dir` whose contents are `bytes` plus
+    /// 64 zero bytes of padding (so `infer` always has enough to sniff).
+    fn write_file(dir: &TempDir, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(bytes).unwrap();
+        f.write_all(&[0u8; 64]).unwrap();
+        path
+    }
+
+    // --- Pure helpers --------------------------------------------------------
+
+    #[test]
+    fn is_type_archive_covers_all_archive_variants() {
+        assert!(is_type_archive(FileType::Zip));
+        assert!(is_type_archive(FileType::Rar));
+        assert!(is_type_archive(FileType::SevenZ));
+        assert!(is_type_archive(FileType::Multi));
+        assert!(is_type_archive(FileType::Sfx));
+        assert!(!is_type_archive(FileType::Mp4));
+        assert!(!is_type_archive(FileType::TS));
+        assert!(!is_type_archive(FileType::Unknown));
+    }
+
+    #[test]
+    fn is_type_video_covers_video_variants() {
+        assert!(is_type_video(FileType::Mp4));
+        assert!(is_type_video(FileType::TS));
+        assert!(!is_type_video(FileType::Zip));
+        assert!(!is_type_video(FileType::Unknown));
+    }
+
+    #[test]
+    fn contains_matches_needle_inside_haystack() {
+        let haystack = b"prefix\x00\x01PK\x03\x04suffix";
+        assert!(contains(haystack, ZIP_MAGIC));
+        assert!(!contains(haystack, SEVENZ_MAGIC));
+    }
+
+    // --- get_file_type: archives --------------------------------------------
+
+    #[test]
+    fn plain_zip_is_zip() {
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "foo.zip", ZIP_MAGIC);
+        assert_eq!(get_file_type(&p), FileType::Zip);
+    }
+
+    #[test]
+    fn zip_with_z01_extension_is_multi() {
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "foo.z01", ZIP_MAGIC);
+        assert_eq!(get_file_type(&p), FileType::Multi);
+    }
+
+    #[test]
+    fn zip_with_001_extension_is_multi() {
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "foo.001", ZIP_MAGIC);
+        assert_eq!(get_file_type(&p), FileType::Multi);
+    }
+
+    #[test]
+    fn zip_with_unrelated_extension_is_still_zip() {
+        // The binary content wins over a misleading extension for the base case.
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "foo.txt", ZIP_MAGIC);
+        assert_eq!(get_file_type(&p), FileType::Zip);
+    }
+
+    #[test]
+    fn plain_7z_is_sevenz() {
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "foo.7z", SEVENZ_MAGIC);
+        assert_eq!(get_file_type(&p), FileType::SevenZ);
+    }
+
+    #[test]
+    fn sevenz_with_001_extension_is_multi() {
+        // Regression guard: .7z.001 used to be classified as SevenZ and then
+        // fail in the native 7z backend with UnexpectedEof.
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "foo.7z.001", SEVENZ_MAGIC);
+        assert_eq!(get_file_type(&p), FileType::Multi);
+    }
+
+    #[test]
+    fn rar_is_rar() {
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "foo.rar", RAR4_MAGIC);
+        assert_eq!(get_file_type(&p), FileType::Rar);
+    }
+
+    // --- get_file_type: SFX detection ---------------------------------------
+
+    #[test]
+    fn pe_with_embedded_sevenz_is_sfx() {
+        let dir = TempDir::new().unwrap();
+        let mut body = PE_STUB.to_vec();
+        body.extend_from_slice(&[0u8; 256]); // fake PE stub padding
+        body.extend_from_slice(SEVENZ_MAGIC);
+        let p = write_file(&dir, "installer.exe", &body);
+        assert_eq!(get_file_type(&p), FileType::Sfx);
+    }
+
+    #[test]
+    fn pe_with_embedded_rar_is_sfx() {
+        let dir = TempDir::new().unwrap();
+        let mut body = PE_STUB.to_vec();
+        body.extend_from_slice(&[0u8; 256]);
+        body.extend_from_slice(RAR4_MAGIC);
+        let p = write_file(&dir, "installer.exe", &body);
+        assert_eq!(get_file_type(&p), FileType::Sfx);
+    }
+
+    #[test]
+    fn pe_with_embedded_zip_is_sfx() {
+        let dir = TempDir::new().unwrap();
+        let mut body = PE_STUB.to_vec();
+        body.extend_from_slice(&[0u8; 256]);
+        body.extend_from_slice(ZIP_MAGIC);
+        let p = write_file(&dir, "installer.exe", &body);
+        assert_eq!(get_file_type(&p), FileType::Sfx);
+    }
+
+    #[test]
+    fn pe_without_archive_payload_is_unknown() {
+        let dir = TempDir::new().unwrap();
+        let mut body = PE_STUB.to_vec();
+        body.extend_from_slice(&[0xAAu8; 1024]); // no archive magic anywhere
+        let p = write_file(&dir, "harmless.exe", &body);
+        assert_eq!(get_file_type(&p), FileType::Unknown);
+    }
+
+    // --- get_file_type: unrecognised ----------------------------------------
+
+    #[test]
+    fn random_bytes_are_unknown() {
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "mystery.bin", b"not an archive at all");
+        assert_eq!(get_file_type(&p), FileType::Unknown);
+    }
+
+    #[test]
+    fn missing_file_is_unknown() {
+        assert_eq!(
+            get_file_type(std::path::Path::new("/definitely/does/not/exist.zip")),
+            FileType::Unknown
+        );
+    }
+}
