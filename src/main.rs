@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use autoarc::cli::{Args, Commands};
+use autoarc::config;
 use autoarc::extractors::unar::lsar;
 use autoarc::fs::get_file_type;
 use clap::Parser;
@@ -33,6 +34,10 @@ async fn main() -> Result<()> {
             } else {
                 args.depth
             };
+            // Initialize the password list once, preferring `-p / --password`
+            // CLI input and falling back to `AUTOARC_PASSWORDS`. Must happen
+            // before any extractor task reads it via `get_password_list()`.
+            config::init_password_list(args.passwords);
             autoarc::runner::run(args.dir, max_depth, args.dry_run, args.yes, args.jobs).await?
         }
     }

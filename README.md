@@ -4,8 +4,9 @@ A concurrent, multi-format archive extractor for batch unpacking encrypted archi
 with a list of candidate passwords.
 
 `autoarc` walks a target directory, recursively unpacks every supported archive it
-finds, automatically tries each password in your `AUTOARC_PASSWORDS` list, and
-shows live progress for each task with a final summary.
+finds, automatically tries each password from `-p / --password` (or
+`AUTOARC_PASSWORDS` as a fallback), and shows live progress for each task with a
+final summary.
 
 ## Platform support
 
@@ -49,23 +50,36 @@ cargo install --path .
 
 ## Configuration
 
-`autoarc` reads candidate passwords from the `AUTOARC_PASSWORDS` environment
-variable (comma-separated). **It's optional** — if every archive you run
-against is unencrypted, you can skip it entirely; autoarc always tries an
-empty password first so no-password archives extract cleanly without any
-configuration.
+`autoarc` tries candidate passwords for encrypted archives in this order:
 
-For encrypted archives, the most convenient way to supply passwords is a
-`.env` file at the project root; see [`.env.example`](.env.example).
+1. The `-p / --password` CLI flag (repeatable, comma-separated).
+2. The `AUTOARC_PASSWORDS` environment variable (comma-separated) when the
+   flag is **not** given.
+3. The empty password only — which is also always tried first, regardless
+   of source, so unencrypted archives extract cleanly without any setup.
+
+For long-lived secrets, the most convenient source is a `.env` file at the
+project root; see [`.env.example`](.env.example):
 
 ```bash
 cp .env.example .env
 # then edit .env and add your candidate passwords
 ```
 
+For one-off runs, pass them on the command line:
+
+```bash
+autoarc <DIR> -p hunter2 -p "correct horse" -p s3cret
+autoarc <DIR> -p 'hunter2,"correct horse",s3cret'
+```
+
+> **Security note:** passwords on the command line may be visible to other
+> processes via `ps(1)` and end up in your shell history. Prefer
+> `AUTOARC_PASSWORDS` via `.env` for long-lived secrets.
+
 | Variable             | Required | Description                                                                                |
 |----------------------|----------|--------------------------------------------------------------------------------------------|
-| `AUTOARC_PASSWORDS`  | no       | Comma-separated list of candidate passwords. Unset = try no-password only.                 |
+| `AUTOARC_PASSWORDS`  | no       | Fallback password list when `-p / --password` is not given. Unset = try no-password only.  |
 | `RUST_LOG`           | no       | Tracing filter (`info`, `debug`, ...). Defaults to `warn`.                                 |
 
 Parallelism (`-j / --jobs`) is intentionally a CLI-only knob — it's a
@@ -98,6 +112,10 @@ autoarc <DIR> -y
 # Cap parallelism (useful when extraction pins too many cores)
 autoarc <DIR> --jobs 4
 autoarc <DIR> -j 1        # strictly sequential
+
+# Pass candidate passwords on the command line (repeatable + comma-separated)
+autoarc <DIR> -p hunter2 -p "correct horse"
+autoarc <DIR> -p 'hunter2,"correct horse",s3cret'
 
 # Inspect a single file's detected type
 autoarc type ./mystery.bin

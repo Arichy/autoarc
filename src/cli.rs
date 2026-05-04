@@ -60,6 +60,33 @@ pub struct Args {
     #[arg(short = 'j', long, default_value_t = 0)]
     pub jobs: usize,
 
+    /// Candidate password(s) to try against encrypted archives.
+    ///
+    /// Repeatable and comma-separated — all of the following build the
+    /// list `[hunter2, correct horse, s3cret]`:
+    ///
+    /// ```text
+    /// -p hunter2 -p "correct horse" -p s3cret
+    /// -p hunter2,"correct horse",s3cret
+    /// --password hunter2,"correct horse" -p s3cret
+    /// ```
+    ///
+    /// When this flag is **not** given, autoarc falls back to the
+    /// `AUTOARC_PASSWORDS` environment variable (same comma-separated
+    /// format); when neither is set, only the empty password is tried.
+    /// The empty password is always tried first regardless of source.
+    ///
+    /// Security note: passwords on the command line may be visible to
+    /// other processes via `ps(1)` and to your shell history. Prefer
+    /// `AUTOARC_PASSWORDS` (e.g. via `.env`) for long-lived secrets.
+    #[arg(
+        short = 'p',
+        long = "password",
+        value_name = "PASSWORD",
+        value_delimiter = ','
+    )]
+    pub passwords: Vec<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
