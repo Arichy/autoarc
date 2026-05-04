@@ -15,7 +15,8 @@ use tracing::{debug, info};
 use crate::error::AutoarcError;
 use crate::extractors;
 use crate::fs::{
-    FileType, get_file_type, is_type_archive, is_type_video, relative_path, rename_video,
+    FileType, get_file_type, is_type_archive, is_type_document, is_type_video, relative_path,
+    rename_video,
 };
 use crate::progress::Reporter;
 
@@ -66,13 +67,19 @@ pub async fn run(dir: PathBuf, max_depth: usize, dry_run: bool, yes: bool) -> Re
     // Phase 2 — plan: fuse multi-volume parts into single logical entries.
     let plan = build_plan(scan_result.archives);
 
-    if plan.is_empty() && scan_result.videos.is_empty() {
-        println!("No archives or videos found in {}", dir.display());
+    if plan.is_empty() && scan_result.videos.is_empty() && scan_result.others.is_empty() {
+        println!("No archives or media files found in {}", dir.display());
         return Ok(());
     }
 
     // Phase 3 — render: show the user what will happen.
-    print_plan(&plan, &scan_result.videos, &dir, max_depth);
+    print_plan(
+        &plan,
+        &scan_result.videos,
+        &scan_result.others,
+        &dir,
+        max_depth,
+    );
 
     if dry_run {
         return Ok(());
@@ -227,10 +234,13 @@ struct ScanItem {
     kind: FileType,
 }
 
-/// Outcome of [`scan`]: archives that need extraction + videos that need a rename.
+/// Outcome of [`scan`]: archives that need extraction + videos that need a
+/// rename + other recognised media (audio / pdf / office / text) that are
+/// merely reported to the user so the scan surface isn't purely video-centric.
 struct ScanResult {
     archives: Vec<ScanItem>,
     videos: Vec<(PathBuf, FileType)>,
+    others: Vec<(PathBuf, FileType)>,
 }
 
 /// Walk `target_dir` (respecting `max_depth`) and classify every file.
@@ -250,6 +260,7 @@ fn scan_top_level(target_dir: &Path) -> Result<ScanResult> {
     let mut result = ScanResult {
         archives: Vec::new(),
         videos: Vec::new(),
+        others: Vec::new(),
     };
 
     let entries =
@@ -265,6 +276,8 @@ fn scan_top_level(target_dir: &Path) -> Result<ScanResult> {
             result.archives.push(ScanItem { path, kind });
         } else if is_type_video(kind) {
             result.videos.push((path, kind));
+        } else if is_type_document(kind) {
+            result.others.push((path, kind));
         }
     }
     Ok(result)
@@ -278,6 +291,7 @@ fn scan_recursive(target_dir: &Path, max_depth: usize) -> Result<ScanResult> {
     let mut result = ScanResult {
         archives: Vec::new(),
         videos: Vec::new(),
+        others: Vec::new(),
     };
 
     let walker = WalkDir::new(target_dir)
@@ -306,6 +320,8 @@ fn scan_recursive(target_dir: &Path, max_depth: usize) -> Result<ScanResult> {
             result.archives.push(ScanItem { path, kind });
         } else if is_type_video(kind) {
             result.videos.push((path, kind));
+        } else if is_type_document(kind) {
+            result.others.push((path, kind));
         }
     }
     Ok(result)
@@ -451,7 +467,13 @@ fn has_ext(path: &Path, ext: &str) -> bool {
 // ============================================================================
 
 /// Print a human-readable extraction plan to stdout.
-fn print_plan(plan: &[PlanItem], videos: &[(PathBuf, FileType)], dir: &Path, max_depth: usize) {
+fn print_plan(
+    plan: &[PlanItem],
+    videos: &[(PathBuf, FileType)],
+    others: &[(PathBuf, FileType)],
+    dir: &Path,
+    max_depth: usize,
+) {
     use console::style;
     use indicatif::HumanBytes;
 
@@ -517,6 +539,32 @@ fn print_plan(plan: &[PlanItem], videos: &[(PathBuf, FileType)], dir: &Path, max
             "\n{} {} video file(s) will be renamed in place.",
             style("Note:").dim(),
             videos.len()
+        );
+    }
+    if !others.is_empty() {
+        let mut counts: [(FileType, &str, usize); 6] = [
+            (FileType::Audio, "audio", 0),
+            (FileType::Pdf, "pdf", 0),
+            (FileType::Docx, "docx", 0),
+            (FileType::Pptx, "pptx", 0),
+            (FileType::Xlsx, "xlsx", 0),
+            (FileType::Text, "text", 0),
+        ];
+        for (_, kind) in others {
+            if let Some(slot) = counts.iter_mut().find(|(k, _, _)| *k == *kind) {
+                slot.2 += 1;
+            }
+        }
+        let breakdown: Vec<String> = counts
+            .iter()
+            .filter(|(_, _, n)| *n > 0)
+            .map(|(_, tag, n)| format!("{n} {tag}"))
+            .collect();
+        println!(
+            "{} {} media file(s) detected ({}) \u{2014} reported only, not modified.",
+            style("Note:").dim(),
+            others.len(),
+            breakdown.join(", "),
         );
     }
     println!();

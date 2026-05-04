@@ -29,6 +29,18 @@ pub enum FileType {
     /// 7z / RAR / ZIP payload appended after the stub. Also handled by the
     /// `unar` subprocess backend, which transparently skips the PE prefix.
     Sfx,
+    /// MP3 / FLAC / OGG / WAV / AAC / M4A — any recognised audio container.
+    Audio,
+    /// Portable Document Format.
+    Pdf,
+    /// Microsoft Word document (modern `.docx` or legacy `.doc`).
+    Docx,
+    /// Microsoft PowerPoint presentation (modern `.pptx` or legacy `.ppt`).
+    Pptx,
+    /// Microsoft Excel spreadsheet (modern `.xlsx` or legacy `.xls`).
+    Xlsx,
+    /// Plain text / source code (detected via the `file(1)` fallback).
+    Text,
     /// Anything we couldn't identify.
     Unknown,
 }
@@ -36,13 +48,15 @@ pub enum FileType {
 /// Detect a file's [`FileType`].
 ///
 /// Magic bytes are checked first via `infer`; if that yields nothing we fall back
-/// to `file -I -b` for MPEG-TS detection, which `infer` does not currently support.
-/// When `infer` reports a Windows PE executable we additionally scan the first
-/// few megabytes for an embedded 7z / RAR / ZIP signature (self-extracting
-/// archives), routing any hit through the `unar` backend.
+/// to `file -I -b`, which covers MPEG-TS streams and plain-text files that
+/// carry no distinguishing magic bytes. When `infer` reports a Windows PE
+/// executable we additionally scan the first few megabytes for an embedded
+/// 7z / RAR / ZIP signature (self-extracting archives), routing any hit
+/// through the `unar` backend.
 pub fn get_file_type(path: &Path) -> FileType {
     match infer::get_from_path(path) {
         Ok(Some(kind)) => match kind.mime_type() {
+            // --- archives -----------------------------------------------
             "application/zip" => {
                 // ZIP magic with a `.z01`/`.001` extension means a split archive.
                 let is_multi = path
@@ -70,7 +84,25 @@ pub fn get_file_type(path: &Path) -> FileType {
                     FileType::SevenZ
                 }
             }
+            // --- videos -------------------------------------------------
             "video/mp4" | "video/x-m4v" => FileType::Mp4,
+            // --- audio --------------------------------------------------
+            "audio/mpeg" | "audio/aac" | "audio/x-flac" | "audio/flac" | "audio/ogg"
+            | "audio/wav" | "audio/x-wav" | "audio/x-aiff" | "audio/m4a" | "audio/midi"
+            | "audio/x-midi" => FileType::Audio,
+            // --- documents ----------------------------------------------
+            "application/pdf" => FileType::Pdf,
+            "application/msword"
+            | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+                FileType::Docx
+            }
+            "application/vnd.ms-powerpoint"
+            | "application/vnd.openxmlformats-officedocument.presentationml.presentation" => {
+                FileType::Pptx
+            }
+            "application/vnd.ms-excel"
+            | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => FileType::Xlsx,
+            // --- SFX ----------------------------------------------------
             "application/vnd.microsoft.portable-executable" => {
                 // Likely an SFX — scan the body for a payload signature.
                 detect_sfx(path).unwrap_or(FileType::Unknown)
@@ -113,10 +145,12 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// Fallback that invokes `file -I -b <path>` to spot MPEG-TS streams.
+/// Fallback that invokes `file -I -b <path>` to spot formats `infer` misses.
 ///
-/// Returns `None` if the binary is missing, exits non-zero, or emits non-UTF-8 data;
-/// in those cases the caller treats the file as [`FileType::Unknown`].
+/// Handles MPEG-TS streams and plain text / source code (anything reported as
+/// a `text/*` mime). Returns `None` if the binary is missing, exits non-zero,
+/// or emits non-UTF-8 data; in those cases the caller treats the file as
+/// [`FileType::Unknown`].
 fn detect_via_file_cmd(path: &Path) -> Option<FileType> {
     let output = std::process::Command::new("file")
         .arg("-I")
@@ -128,8 +162,14 @@ fn detect_via_file_cmd(path: &Path) -> Option<FileType> {
         return None;
     }
     let stdout = std::str::from_utf8(&output.stdout).ok()?;
-    if stdout.to_lowercase().starts_with("video/mp2t") {
+    let lower = stdout.to_lowercase();
+    if lower.starts_with("video/mp2t") {
         Some(FileType::TS)
+    } else if lower.starts_with("text/") && !lower.contains("charset=binary") {
+        // `file -I -b` returns `text/plain; charset=binary` for any
+        // unrecognised binary blob. We only treat it as real text when the
+        // charset is a textual one (utf-8 / us-ascii / iso-8859-* / etc.).
+        Some(FileType::Text)
     } else {
         None
     }
@@ -146,6 +186,21 @@ pub fn is_type_archive(t: FileType) -> bool {
 /// Returns `true` for the video formats the pipeline can post-process.
 pub fn is_type_video(t: FileType) -> bool {
     matches!(t, FileType::Mp4 | FileType::TS)
+}
+
+/// Returns `true` for the non-archive, non-video media formats the scanner
+/// merely *reports* (it never renames or rewrites them). Kept as a single
+/// bucket so the runner can surface an aggregate count in the plan.
+pub fn is_type_document(t: FileType) -> bool {
+    matches!(
+        t,
+        FileType::Audio
+            | FileType::Pdf
+            | FileType::Docx
+            | FileType::Pptx
+            | FileType::Xlsx
+            | FileType::Text
+    )
 }
 
 #[cfg(test)]
@@ -172,6 +227,16 @@ mod tests {
         path
     }
 
+    /// Variant of [`write_file`] without the trailing zero padding — used by
+    /// text-fallback tests, where those NUL bytes would make `file(1)` report
+    /// `charset=binary` and break the heuristic.
+    fn write_file_raw(dir: &TempDir, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(bytes).unwrap();
+        path
+    }
+
     // --- Pure helpers --------------------------------------------------------
 
     #[test]
@@ -192,6 +257,26 @@ mod tests {
         assert!(is_type_video(FileType::TS));
         assert!(!is_type_video(FileType::Zip));
         assert!(!is_type_video(FileType::Unknown));
+    }
+
+    #[test]
+    fn is_type_document_covers_all_document_variants() {
+        assert!(is_type_document(FileType::Audio));
+        assert!(is_type_document(FileType::Pdf));
+        assert!(is_type_document(FileType::Docx));
+        assert!(is_type_document(FileType::Pptx));
+        assert!(is_type_document(FileType::Xlsx));
+        assert!(is_type_document(FileType::Text));
+        // Archives / videos / unknown must stay out of the document bucket so
+        // the runner never starts renaming or reporting them in that branch.
+        assert!(!is_type_document(FileType::Zip));
+        assert!(!is_type_document(FileType::Rar));
+        assert!(!is_type_document(FileType::SevenZ));
+        assert!(!is_type_document(FileType::Multi));
+        assert!(!is_type_document(FileType::Sfx));
+        assert!(!is_type_document(FileType::Mp4));
+        assert!(!is_type_document(FileType::TS));
+        assert!(!is_type_document(FileType::Unknown));
     }
 
     #[test]
@@ -296,12 +381,82 @@ mod tests {
         assert_eq!(get_file_type(&p), FileType::Unknown);
     }
 
+    // --- get_file_type: documents ------------------------------------------
+    //
+    // We stick to magic-byte signatures `infer` definitely recognises and
+    // skip Office docx/xlsx/pptx: those require a fully-formed ZIP central
+    // directory with specific `[Content_Types].xml`, which would mean
+    // shipping real fixtures in the test module. Integration-level coverage
+    // can exercise those via real files later if needed.
+
+    #[test]
+    fn pdf_magic_is_pdf() {
+        // %PDF-1.4 header is enough for infer to return application/pdf.
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "doc.pdf", b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+        assert_eq!(get_file_type(&p), FileType::Pdf);
+    }
+
+    #[test]
+    fn mp3_id3_magic_is_audio() {
+        // ID3v2 header: "ID3" + version + flags + 4-byte synchsafe size.
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "track.mp3", b"ID3\x03\x00\x00\x00\x00\x00\x00");
+        assert_eq!(get_file_type(&p), FileType::Audio);
+    }
+
+    #[test]
+    fn flac_magic_is_audio() {
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "track.flac", b"fLaC");
+        assert_eq!(get_file_type(&p), FileType::Audio);
+    }
+
+    #[test]
+    fn ogg_magic_is_audio() {
+        // OggS + version (0) + header type + granule position + ...
+        let dir = TempDir::new().unwrap();
+        let p = write_file(
+            &dir,
+            "track.ogg",
+            b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00",
+        );
+        assert_eq!(get_file_type(&p), FileType::Audio);
+    }
+
+    #[test]
+    fn wav_magic_is_audio() {
+        // RIFF + size (4B placeholder) + WAVE + fmt  chunk start.
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "track.wav", b"RIFF\x00\x00\x00\x00WAVEfmt ");
+        assert_eq!(get_file_type(&p), FileType::Audio);
+    }
+
+    #[test]
+    fn plain_text_falls_back_to_text_via_file_cmd() {
+        // Plain ASCII has no magic bytes, so infer returns None and the
+        // `file -I -b` fallback should classify it as text/*.
+        let dir = TempDir::new().unwrap();
+        let p = write_file_raw(
+            &dir,
+            "notes.txt",
+            b"hello world, this is a plain text file.\n",
+        );
+        assert_eq!(get_file_type(&p), FileType::Text);
+    }
+
     // --- get_file_type: unrecognised ----------------------------------------
 
     #[test]
     fn random_bytes_are_unknown() {
+        // Deliberately non-text, non-archive binary noise: stays Unknown even
+        // though the `file -I -b` fallback now recognises `text/*`.
         let dir = TempDir::new().unwrap();
-        let p = write_file(&dir, "mystery.bin", b"not an archive at all");
+        let p = write_file(
+            &dir,
+            "mystery.bin",
+            &[0xFFu8, 0xFE, 0x00, 0x01, 0x80, 0x81, 0x82, 0x83],
+        );
         assert_eq!(get_file_type(&p), FileType::Unknown);
     }
 
