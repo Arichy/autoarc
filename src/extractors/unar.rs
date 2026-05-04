@@ -8,7 +8,7 @@ use anyhow::Result;
 use tracing::{debug, error, trace};
 
 use crate::error::AutoarcError;
-use crate::fs::{get_file_type, is_type_archive, is_type_video, rename_video};
+use crate::fs::{get_file_type, is_type_archive, is_type_video, out_dir_name, rename_video};
 use crate::progress::TaskReporter;
 
 use super::{ExtractOutcome, Extractor};
@@ -20,12 +20,8 @@ impl Extractor for UnarExtractor {
     fn try_extract(path: &Path, password: &str, reporter: &TaskReporter) -> Result<ExtractOutcome> {
         debug!("[unar] try_extract {path:?}");
 
-        let basename = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| AutoarcError::Other(format!("invalid file stem: {path:?}")))?;
         let dirname = path.parent().unwrap_or_else(|| Path::new("."));
-        let outdir = dirname.join(format!("{basename}_out"));
+        let outdir = dirname.join(out_dir_name(path));
 
         if !outdir.exists() {
             fs::create_dir_all(&outdir).map_err(|e| AutoarcError::io(outdir.clone(), e))?;

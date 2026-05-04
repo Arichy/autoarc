@@ -141,8 +141,10 @@ When `depth == 1` (the default), only the immediate contents of `<DIR>` are
 scanned. When `depth > 1` (or `--recursive`), autoarc descends into
 subdirectories while pruning its own `_out/` output folders from the walk to
 avoid re-processing previous runs. In either mode, archives are extracted
-**in place** — each archive gets a sibling `{filename}_out/` directory and
-the original archive is never moved.
+**in place** — each archive gets a sibling directory whose name is the full
+filename with every `.` replaced by `_` plus the `_out` suffix (so `foo.zip`
+→ `foo_zip_out/`, `foo.7z` → `foo_7z_out/`), and the original archive is
+never moved.
 
 ### `just` recipes
 
@@ -176,7 +178,10 @@ just check         # one-shot: fmt-check + lint + release build
 - Multi-password trial-and-error per archive (stops on first match)
 - Live `indicatif` progress bars + a coloured run summary
 - Archives are extracted **in place** next to the originals — each archive
-  gets a sibling `{filename}_out/` directory; originals are never moved
+  gets a sibling `_out/` directory named after the full filename with every
+  `.` replaced by `_` (so `foo.zip` → `foo_zip_out/`, `foo.7z` →
+  `foo_7z_out/`); sibling archives sharing a stem never collide. Originals
+  are never moved.
 - Detected videos (`.mp4`, `.ts`) inside archives get their extension corrected
   in-place; audio / PDF / Office / text files are counted and reported but
   never modified
@@ -198,10 +203,13 @@ Given `autoarc /tmp/in` (default `--depth 1`):
 ```
 /tmp/in/
 ├── foo.zip              # original, untouched
-├── foo_out/...          # extracted contents, sibling of the archive
+├── foo_zip_out/...      # extracted contents, sibling of the archive
 ├── bar.rar
-└── bar_out/...
+└── bar_rar_out/...
 ```
+
+If `foo.zip` and `foo.7z` both live in the same directory, they get
+`foo_zip_out/` and `foo_7z_out/` respectively — no collision.
 
 With `--depth N > 1` or `--recursive`, subdirectories are walked too; the
 layout inside each directory is the same:
@@ -209,9 +217,9 @@ layout inside each directory is the same:
 ```
 /tmp/in/
 ├── sub/foo.zip
-├── sub/foo_out/...
+├── sub/foo_zip_out/...
 └── sub/nested/bar.rar
-    └── bar_out/...
+    └── bar_rar_out/...
 ```
 
 - Archives are always extracted **in place** — autoarc never moves or

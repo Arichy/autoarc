@@ -104,8 +104,9 @@ pub async fn run(
     // Phase 4 — execute: rename videos and emit one TaskParams per plan item.
     //
     // Archives are always extracted in place: each extractor writes into a
-    // sibling `{archive_stem}_out/` directory. We don't move or back up the
-    // originals — that's the user's call.
+    // sibling `{filename_with_dots_replaced}_out/` directory (e.g. `foo.zip`
+    // → `foo_zip_out/`, `foo.7z` → `foo_7z_out/`). We don't move or back up
+    // the originals — that's the user's call.
     let initial_tasks = execute(plan, scan_result.videos)?;
     debug!("initial tasks: {initial_tasks:?}");
 
@@ -665,8 +666,8 @@ fn prompt_continue() -> Result<bool> {
 /// [`TaskParams`] per logical archive for the runner to consume.
 ///
 /// Archives are **not** moved — each extractor writes into a sibling
-/// `{archive_stem}_out/` directory, keeping originals exactly where the user
-/// put them.
+/// `{filename_with_dots_replaced}_out/` directory (`foo.zip` → `foo_zip_out/`),
+/// keeping originals exactly where the user put them.
 fn execute(plan: Vec<PlanItem>, videos: Vec<(PathBuf, FileType)>) -> Result<Vec<TaskParams>> {
     let tasks = plan
         .into_iter()
@@ -790,12 +791,12 @@ mod tests {
     #[test]
     fn display_shows_nested_arrow_when_descending_from_parent() {
         let task = TaskParams {
-            archive_path: PathBuf::from("/work/foo_out/inner.7z"),
+            archive_path: PathBuf::from("/work/foo_zip_out/inner.7z"),
             root: PathBuf::from("/work/foo.zip"),
         };
         assert_eq!(
             task.display(Path::new("/work")),
-            "foo_out/inner.7z <- foo.zip"
+            "foo_zip_out/inner.7z <- foo.zip"
         );
     }
 

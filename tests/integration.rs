@@ -67,7 +67,7 @@ fn zip_no_password_extracts_plaintext() {
         "unencrypted zip should succeed with no children",
     );
 
-    let out = td.path().join("single_nopass_out/hello.txt");
+    let out = td.path().join("single_nopass_zip_out/hello.txt");
     assert_eq!(fs::read_to_string(out).unwrap(), HELLO_TXT);
 }
 
@@ -100,7 +100,7 @@ fn zip_with_password_extracts_with_correct_password() {
     let outcome = ZipExtractor::try_extract(&archive, "secret", &reporter()).unwrap();
     assert!(matches!(outcome, ExtractOutcome::Success(_)));
 
-    let out = td.path().join("single_pass_out/hello.txt");
+    let out = td.path().join("single_pass_zip_out/hello.txt");
     assert_eq!(fs::read_to_string(out).unwrap(), HELLO_TXT);
 }
 
@@ -130,11 +130,11 @@ fn nested_zip_surfaces_inner_7z_as_child() {
     assert!(inner_7z.exists(), "inner.7z must be materialised on disk");
 
     // Step 2: extract the inner 7z with its own password. The plaintext should
-    // end up at {tempdir}/nested_pass_out/inner_out/hello.txt.
+    // end up at {tempdir}/nested_pass_zip_out/inner_7z_out/hello.txt.
     let outcome = SevenzExtractor::try_extract(inner_7z, "inner", &reporter()).unwrap();
     assert!(matches!(outcome, ExtractOutcome::Success(_)));
 
-    let out = inner_7z.parent().unwrap().join("inner_out/hello.txt");
+    let out = inner_7z.parent().unwrap().join("inner_7z_out/hello.txt");
     assert_eq!(fs::read_to_string(out).unwrap(), HELLO_TXT);
 }
 
@@ -185,9 +185,10 @@ fn multi_volume_7z_extracts_via_unar() {
         "unar must accept the multi-volume 7z and report Success",
     );
 
-    // `file_stem` of split.7z.001 is "split.7z", so the sibling dir is
-    // split.7z_out/.
-    let out = td.path().join("split.7z_out/bigfile.bin");
+    // The out dir for `split.7z.001` is `split_7z_001_out/` (every `.` in the
+    // file name becomes `_`), so sibling archives sharing the `split` stem
+    // never collide.
+    let out = td.path().join("split_7z_001_out/bigfile.bin");
     let data = fs::read(&out).unwrap_or_else(|e| panic!("read {}: {e}", out.display()));
     assert_eq!(
         data.len(),
