@@ -69,8 +69,15 @@ cp .env.example .env
 ### CLI
 
 ```bash
-# Extract every supported archive in <DIR>
+# Extract every supported archive in <DIR> (top level only)
 autoarc autoarc <DIR>
+
+# Recurse into subdirectories up to N levels
+autoarc autoarc <DIR> --depth 3
+
+# Recurse without limit
+autoarc autoarc <DIR> --recursive
+autoarc autoarc <DIR> -r
 
 # Inspect a single file's detected type
 autoarc type ./mystery.bin
@@ -79,20 +86,38 @@ autoarc type ./mystery.bin
 autoarc lsar ./bundle.zip
 ```
 
+#### Recursion modes
+
+| Flag                    | Meaning                                                     |
+|-------------------------|-------------------------------------------------------------|
+| (none)                  | `--depth 1` — only the immediate contents of `<DIR>`       |
+| `--depth N` / `-d N`    | Walk up to `N` directory levels (`N ≥ 1`)                  |
+| `--depth 0`             | Unlimited recursion (alias for `--recursive`)               |
+| `--recursive` / `-r`    | Unlimited recursion                                         |
+
+When `depth == 1` (the default), top-level archives are first **moved into
+`<DIR>/MM-DD/` and copied into `<DIR>/MM-DD_bak/`** for safety.
+When `depth > 1`, archives are processed **in place** — the date-folder ritual
+is skipped and our own `_out` / `MM-DD*` directories are pruned from the walk
+to avoid re-processing previous runs' output.
+
 ### `just` recipes
 
-A [`justfile`](justfile) provides shortcuts:
+A [`justfile`](justfile) provides shortcuts; extra args are forwarded to the
+binary:
 
 ```bash
-just run                          # uses default ./archives
-just run /path/to/archives        # custom dir
-just debug /path/to/archives      # same with RUST_LOG=debug
+just run                                # uses default ./archives
+just run /path/to/archives              # custom dir, depth=1
+just run /path/to/archives -r           # custom dir, unlimited recursion
+just run /path/to/archives -d 3         # custom dir, depth=3
+just debug /path/to/archives -r         # same with RUST_LOG=debug
 just type ./mystery.bin
 ```
 
 ## Behaviour
 
-Given `autoarc autoarc /tmp/in`:
+Given `autoarc autoarc /tmp/in` (default `--depth 1`):
 
 ```
 /tmp/in/
@@ -106,12 +131,25 @@ Given `autoarc autoarc /tmp/in`:
     └── bar.rar
 ```
 
-- Only the **top level** of `<DIR>` is scanned for initial archives. Nested
-  subdirectories are not walked (but archives produced *by extraction* are queued
-  recursively).
+With `--depth N > 1` or `--recursive`, archives are extracted **in place**
+(no MM-DD movement, no backup copy):
+
+```
+/tmp/in/
+├── sub/foo.zip
+├── sub/foo_out/...
+└── sub/nested/bar.rar
+    └── bar_out/...
+```
+
+- The depth limit only applies to the **initial** scan. Archives produced *by
+  extraction itself* are always queued recursively, regardless of `--depth`.
 - Multi-volume archives are kept in place so their `.z02`, `.z03`, ... siblings
   remain reachable.
-- Videos found in `<DIR>` itself are renamed to enforce the canonical extension.
+- Videos found during the scan are renamed in-place to enforce the canonical
+  extension.
+- During recursive scans, directories named `*_out`, `MM-DD`, or `MM-DD_bak`
+  are skipped to avoid re-processing previous runs' artefacts.
 
 ## Logging
 

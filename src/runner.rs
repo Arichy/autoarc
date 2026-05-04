@@ -48,8 +48,14 @@ impl TaskParams {
 }
 
 /// Top-level entry point invoked by the binary for the `autoarc autoarc <DIR>` subcommand.
-pub async fn run(dir: PathBuf) -> Result<()> {
-    let initial_tasks = prepare_archives(&dir)?;
+///
+/// `max_depth` controls how deep the initial directory scan walks. `1` only
+/// inspects the immediate contents of `dir` (the historical behaviour);
+/// `usize::MAX` means unlimited. Note that this only affects the **initial**
+/// scan: any nested archives produced by extraction itself are always queued
+/// recursively regardless of `max_depth`.
+pub async fn run(dir: PathBuf, max_depth: usize) -> Result<()> {
+    let initial_tasks = prepare_archives(&dir, max_depth)?;
     debug!("initial tasks: {initial_tasks:?}");
 
     if initial_tasks.is_empty() {
@@ -175,11 +181,25 @@ fn spawn_task(
     });
 }
 
-/// Walk the top level of `target_dir`, sorting files into archives, videos, or noise.
+/// Walk the requested depth of `target_dir`, sorting files into archives,
+/// videos, or noise.
 ///
-/// Archives are moved into today's working directory after a copy is parked in the
-/// `_bak` directory; videos are renamed in place; everything else is ignored.
-fn prepare_archives(target_dir: &Path) -> Result<Vec<TaskParams>> {
+/// At `max_depth == 1` the historical behaviour is preserved: archives are
+/// copied to today's `MM-DD_bak/` and moved into today's `MM-DD/` working
+/// folder. For deeper scans the date-folder ritual is skipped and archives are
+/// processed in place, with our own `_out` / `MM-DD*` artefact directories
+/// pruned from the walk so we never re-process previous output.
+fn prepare_archives(target_dir: &Path, max_depth: usize) -> Result<Vec<TaskParams>> {
+    if max_depth <= 1 {
+        prepare_top_level(target_dir)
+    } else {
+        prepare_recursive(target_dir, max_depth)
+    }
+}
+
+/// Original behaviour: scan only the top level, move archives into
+/// `MM-DD/` and back them up under `MM-DD_bak/`.
+fn prepare_top_level(target_dir: &Path) -> Result<Vec<TaskParams>> {
     let today = today_dir_name(target_dir);
     if !today.exists() {
         std::fs::create_dir(&today).map_err(|e| AutoarcError::io(today.clone(), e))?;
@@ -236,4 +256,76 @@ fn prepare_archives(target_dir: &Path) -> Result<Vec<TaskParams>> {
     }
 
     Ok(tasks)
+}
+
+/// Recursive scan: walk up to `max_depth` directory levels, leaving archives
+/// where they were found and emitting them as tasks directly.
+///
+/// Three categories of directory are pruned from the walk to avoid feedback
+/// loops with previous runs:
+///   * `*_out` — extraction output of any prior archive
+///   * `MM-DD` — today's (or any past day's) working directory
+///   * `MM-DD_bak` — today's (or any past day's) backup directory
+fn prepare_recursive(target_dir: &Path, max_depth: usize) -> Result<Vec<TaskParams>> {
+    use walkdir::WalkDir;
+
+    let mut tasks = Vec::new();
+
+    let walker = WalkDir::new(target_dir)
+        .max_depth(max_depth)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            if e.file_type().is_dir() {
+                let name = e.file_name().to_string_lossy();
+                !is_artefact_dir(&name)
+            } else {
+                true
+            }
+        });
+
+    for entry in walker {
+        let entry = entry.map_err(|e| {
+            AutoarcError::Other(format!("walkdir error under {target_dir:?}: {e}"))
+        })?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let filepath = entry.into_path();
+        let kind = get_file_type(&filepath);
+
+        if is_type_archive(kind) {
+            tasks.push(TaskParams {
+                archive_path: filepath.clone(),
+                root: filepath,
+            });
+        } else if is_type_video(kind) {
+            rename_video(&filepath, kind)?;
+        }
+    }
+
+    Ok(tasks)
+}
+
+/// Recognise our own output / backup / working directories so the recursive
+/// scan never re-processes them.
+fn is_artefact_dir(name: &str) -> bool {
+    if name.ends_with("_out") {
+        return true;
+    }
+    let stripped = name.strip_suffix("_bak").unwrap_or(name);
+    is_md_date(stripped)
+}
+
+/// Match the `MM-DD` pattern produced by [`today_dir_name`].
+fn is_md_date(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 5
+        && bytes[0].is_ascii_digit()
+        && bytes[1].is_ascii_digit()
+        && bytes[2] == b'-'
+        && bytes[3].is_ascii_digit()
+        && bytes[4].is_ascii_digit()
 }

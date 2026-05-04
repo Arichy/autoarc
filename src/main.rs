@@ -24,7 +24,19 @@ async fn main() -> Result<()> {
                 println!("{}", entry.display());
             }
         }
-        Commands::Autoarc { dir } => autoarc::runner::run(dir).await?,
+        Commands::Autoarc {
+            dir,
+            depth,
+            recursive,
+        } => {
+            // `--recursive` and `--depth 0` both mean "no limit".
+            let max_depth = if recursive || depth == 0 {
+                usize::MAX
+            } else {
+                depth
+            };
+            autoarc::runner::run(dir, max_depth).await?
+        }
     }
 
     Ok(())

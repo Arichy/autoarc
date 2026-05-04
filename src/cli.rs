@@ -25,5 +25,20 @@ pub enum Commands {
     Lsar { filepath: PathBuf },
 
     /// Recursively unpack every supported archive in `dir`.
-    Autoarc { dir: PathBuf },
+    Autoarc {
+        /// Directory to scan for archives.
+        dir: PathBuf,
+
+        /// Maximum directory depth to scan for archives.
+        ///
+        /// `1` (the default) only inspects the immediate contents of `dir`.
+        /// `2` also enters direct subdirectories, and so on. A value of `0`
+        /// is treated the same as `--recursive`.
+        #[arg(short, long, default_value_t = 1)]
+        depth: usize,
+
+        /// Shortcut for unlimited recursion (overrides `--depth`).
+        #[arg(short, long, default_value_t = false)]
+        recursive: bool,
+    },
 }
