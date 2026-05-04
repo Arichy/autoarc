@@ -19,11 +19,23 @@ pub struct SevenzExtractor;
 
 impl Extractor for SevenzExtractor {
     fn try_extract(path: &Path, password: &str, reporter: &TaskReporter) -> Result<ExtractOutcome> {
-        debug!("[7z] try_extract {path:?}");
+        debug!(
+            "[7z] try_extract {path:?} with password (len={}, empty={})",
+            password.len(),
+            password.is_empty()
+        );
         match check_password(path, password) {
-            Ok(true) => {}
-            Ok(false) => return Ok(ExtractOutcome::BadPassword),
-            Err(e) => return Err(e.into()),
+            Ok(true) => {
+                debug!("[7z] password verified for {path:?}");
+            }
+            Ok(false) => {
+                debug!("[7z] password rejected for {path:?} — trying next");
+                return Ok(ExtractOutcome::BadPassword);
+            }
+            Err(e) => {
+                debug!("[7z] check_password hard error for {path:?}: {e:?}");
+                return Err(e.into());
+            }
         }
         let children = sevenz_with_password(path, password, reporter)?;
         Ok(ExtractOutcome::Success(children))
@@ -34,7 +46,19 @@ impl Extractor for SevenzExtractor {
 fn check_password(archive_path: &Path, password_str: &str) -> Result<bool, SevenzError> {
     let file = File::open(archive_path)?;
     let pwd: Password = password_str.into();
-    let mut reader = ArchiveReader::new(file, pwd)?;
+
+    // `ArchiveReader::new` itself can return `PasswordRequired` when the
+    // archive has an encrypted *header* (common for 7z files created with
+    // "encrypt file names" enabled) and we supplied the empty password.
+    // Treat that case the same as a bad-password verdict on an encrypted
+    // entry further down — "this candidate doesn't work, move on".
+    let mut reader = match ArchiveReader::new(file, pwd) {
+        Ok(r) => r,
+        Err(SevenzError::MaybeBadPassword(_)) | Err(SevenzError::PasswordRequired) => {
+            return Ok(false);
+        }
+        Err(e) => return Err(e),
+    };
 
     let result =
         reader.for_each_entries(&mut |entry: &ArchiveEntry, file_reader: &mut dyn Read| {
