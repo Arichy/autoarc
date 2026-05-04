@@ -43,11 +43,23 @@ can skip installing `unar` entirely.
 
 ## Install
 
+From crates.io (once published):
+
 ```bash
-git clone https://github.com/<you>/autoarc.git
+cargo install autoarc
+```
+
+From source:
+
+```bash
+git clone https://github.com/Arichy/autoarc.git
 cd autoarc
 cargo install --path .
 ```
+
+> `cargo install` only pulls the Rust binary. You still need `unar` / `lsar`
+> on your `PATH` for multi-volume and SFX archives — see **Prerequisites**
+> above.
 
 ## Configuration
 
@@ -200,5 +212,14 @@ Log lines are routed above the live progress bars so the UI never tears.
 
 ## License
 
-MIT — see [LICENSE](LICENSE) (or pick whichever license you prefer before
-publishing).
+Dual-licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the Apache-2.0
+license, shall be dual-licensed as above, without any additional terms or
+conditions.
