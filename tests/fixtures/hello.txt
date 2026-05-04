@@ -1,0 +1,3 @@
+hello from autoarc fixtures
+this is plaintext used to exercise the extractor pipeline
+line three

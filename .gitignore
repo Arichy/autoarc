@@ -16,3 +16,13 @@
 /test-dir/
 /archives/
 /scratch/
+
+# Committed extractor test fixtures override the broad archive ignores above.
+!/tests/fixtures/*.zip
+!/tests/fixtures/*.rar
+!/tests/fixtures/*.7z
+!/tests/fixtures/*.7z.*
+!/tests/fixtures/*.001
+!/tests/fixtures/*.z01
+!/tests/fixtures/*.z02
+!/tests/fixtures/*.z03

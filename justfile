@@ -30,9 +30,9 @@ fmt-check:
 lint:
   cargo clippy --all-targets --release -- -D warnings
 
-# Run the unit test suite.
+# Run the unit and integration test suites.
 test:
-  cargo test --lib
+  cargo test
 
 # Aggregate "is this PR ready?" check: format + lint + tests + build.
 check: fmt-check lint test
