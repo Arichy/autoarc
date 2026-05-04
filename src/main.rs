@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
             } else {
                 args.depth
             };
-            autoarc::runner::run(args.dir, max_depth, args.dry_run, args.yes).await?
+            autoarc::runner::run(args.dir, max_depth, args.dry_run, args.yes, args.jobs).await?
         }
     }
 

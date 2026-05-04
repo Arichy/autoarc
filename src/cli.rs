@@ -50,6 +50,15 @@ pub struct Args {
     #[arg(short, long, default_value_t = false)]
     pub yes: bool,
 
+    /// Maximum number of archives to extract in parallel.
+    ///
+    /// `0` (the default) means "auto" — use
+    /// [`std::thread::available_parallelism`] (falling back to `4`). The
+    /// environment variable `AUTOARC_JOBS` is consulted when this flag is
+    /// left at `0`. Use `-j 1` to force strictly sequential extraction.
+    #[arg(short = 'j', long, default_value_t = 0)]
+    pub jobs: usize,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }

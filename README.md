@@ -66,6 +66,7 @@ cp .env.example .env
 | Variable             | Required | Description                                                                                |
 |----------------------|----------|--------------------------------------------------------------------------------------------|
 | `AUTOARC_PASSWORDS`  | no       | Comma-separated list of candidate passwords. Unset = try no-password only.                 |
+| `AUTOARC_JOBS`       | no       | Max parallel extractions. `0` / unset = auto (`available_parallelism`). Overridden by `-j`.|
 | `RUST_LOG`           | no       | Tracing filter (`info`, `debug`, ...). Defaults to `warn`.                                 |
 
 ## Usage
@@ -90,6 +91,10 @@ autoarc <DIR> -n
 # Skip the interactive [Y/n] confirmation prompt
 autoarc <DIR> --yes
 autoarc <DIR> -y
+
+# Cap parallelism (useful when extraction pins too many cores)
+autoarc <DIR> --jobs 4
+autoarc <DIR> -j 1        # strictly sequential
 
 # Inspect a single file's detected type
 autoarc type ./mystery.bin

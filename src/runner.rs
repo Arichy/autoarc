@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, Semaphore, mpsc};
 use tracing::{debug, info};
 
 use crate::error::AutoarcError;
@@ -58,7 +58,18 @@ impl TaskParams {
 /// `dry_run` prints the planned work and exits without touching the filesystem.
 /// `yes` skips the interactive `[y/N]` confirmation prompt (the prompt is also
 /// skipped automatically when stdin is not a TTY, e.g. in CI).
-pub async fn run(dir: PathBuf, max_depth: usize, dry_run: bool, yes: bool) -> Result<()> {
+///
+/// `jobs` caps how many archives may be extracted in parallel. `0` means
+/// "auto" — fall back to the `AUTOARC_JOBS` env var, else
+/// [`std::thread::available_parallelism`] (else `4`). Use `1` for strictly
+/// sequential extraction.
+pub async fn run(
+    dir: PathBuf,
+    max_depth: usize,
+    dry_run: bool,
+    yes: bool,
+    jobs: usize,
+) -> Result<()> {
     use std::io::IsTerminal;
 
     // Phase 1 — scan: pure read pass, classifies every file.
@@ -106,6 +117,11 @@ pub async fn run(dir: PathBuf, max_depth: usize, dry_run: bool, yes: bool) -> Re
     let reporter = Reporter::new(initial_tasks.len());
     crate::progress::init_tracing(&reporter);
 
+    // Resolve the effective parallelism cap.
+    let effective_jobs = resolve_jobs(jobs);
+    info!("extracting with up to {effective_jobs} parallel job(s) (requested = {jobs}, 0 = auto)");
+    let jobs_sem = Arc::new(Semaphore::new(effective_jobs));
+
     let (tx, mut rx) = mpsc::channel::<TaskParams>(32);
     let active = Arc::new(AtomicUsize::new(0));
     let all_done = Arc::new(Notify::new());
@@ -118,6 +134,7 @@ pub async fn run(dir: PathBuf, max_depth: usize, dry_run: bool, yes: bool) -> Re
     let consumer_shutdown = Arc::clone(&shutdown);
     let consumer_dir = dir.clone();
     let consumer_reporter = reporter.clone();
+    let consumer_sem = Arc::clone(&jobs_sem);
 
     let consumer_handle = tokio::spawn(async move {
         info!("consumer started");
@@ -137,6 +154,7 @@ pub async fn run(dir: PathBuf, max_depth: usize, dry_run: bool, yes: bool) -> Re
                         consumer_tx.clone(),
                         Arc::clone(&consumer_active),
                         Arc::clone(&consumer_done),
+                        Arc::clone(&consumer_sem),
                         consumer_reporter.clone(),
                     );
                 }
@@ -177,12 +195,29 @@ fn spawn_task(
     tx: mpsc::Sender<TaskParams>,
     active: Arc<AtomicUsize>,
     all_done: Arc<Notify>,
+    jobs_sem: Arc<Semaphore>,
     reporter: Reporter,
 ) {
     let label = task.display(&dir);
     let task_reporter = reporter.task(label.clone());
 
     tokio::spawn(async move {
+        // Hold a semaphore permit across the entire blocking extraction so no
+        // more than `--jobs` archives compete for CPU / disk / the blocking
+        // thread pool at once. The permit is released when `_permit` drops at
+        // the end of this task.
+        let _permit = match jobs_sem.acquire_owned().await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("semaphore closed unexpectedly: {e}");
+                reporter.task_failed(&label, &e);
+                if active.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    all_done.notify_one();
+                }
+                return;
+            }
+        };
+
         let archive_path = task.archive_path.clone();
         let root = task.root.clone();
         let file_type = get_file_type(&archive_path);
@@ -219,6 +254,35 @@ fn spawn_task(
             all_done.notify_one();
         }
     });
+}
+
+// ============================================================================
+// Jobs resolution: CLI flag > AUTOARC_JOBS env var > available_parallelism > 4.
+// ============================================================================
+
+/// Resolve the effective `--jobs` value, following the precedence:
+///
+/// 1. If `cli_jobs > 0`, use it verbatim.
+/// 2. Otherwise consult `AUTOARC_JOBS` (must parse to a positive integer).
+/// 3. Otherwise fall back to [`std::thread::available_parallelism`].
+/// 4. If even that fails, use a hard-coded `4`.
+///
+/// The returned value is guaranteed to be `>= 1` so that callers can hand it
+/// straight to `Semaphore::new` without additional bounds checks.
+fn resolve_jobs(cli_jobs: usize) -> usize {
+    if cli_jobs > 0 {
+        return cli_jobs;
+    }
+    let from_env = std::env::var("AUTOARC_JOBS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0);
+    if let Some(n) = from_env {
+        return n;
+    }
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
 }
 
 // ============================================================================
@@ -624,6 +688,75 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::TempDir;
+
+    // --- resolve_jobs --------------------------------------------------------
+
+    /// Serial guard so tests that read/write `AUTOARC_JOBS` can't race each
+    /// other under `cargo test`'s default thread pool.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_env<F: FnOnce() -> R, R>(key: &str, val: Option<&str>, f: F) -> R {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: single-threaded section enforced by ENV_LOCK.
+        let prev = std::env::var(key).ok();
+        unsafe {
+            match val {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        let out = f();
+        unsafe {
+            match prev {
+                Some(p) => std::env::set_var(key, p),
+                None => std::env::remove_var(key),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn resolve_jobs_prefers_explicit_cli_flag_over_env_and_cpu() {
+        with_env("AUTOARC_JOBS", Some("99"), || {
+            // CLI value wins even when env var is also set.
+            assert_eq!(resolve_jobs(3), 3);
+            assert_eq!(resolve_jobs(1), 1);
+        });
+    }
+
+    #[test]
+    fn resolve_jobs_reads_env_var_when_cli_is_zero() {
+        with_env("AUTOARC_JOBS", Some("7"), || {
+            assert_eq!(resolve_jobs(0), 7);
+        });
+    }
+
+    #[test]
+    fn resolve_jobs_ignores_invalid_env_and_falls_back_to_cpu_count() {
+        with_env("AUTOARC_JOBS", Some("not-a-number"), || {
+            let n = resolve_jobs(0);
+            assert!(n >= 1, "auto fallback must yield >= 1, got {n}");
+        });
+        with_env("AUTOARC_JOBS", Some("0"), || {
+            // "0" is treated as "auto" (same as unset).
+            let n = resolve_jobs(0);
+            assert!(n >= 1);
+        });
+    }
+
+    #[test]
+    fn resolve_jobs_unset_env_falls_back_to_available_parallelism() {
+        with_env("AUTOARC_JOBS", None, || {
+            let n = resolve_jobs(0);
+            assert!(n >= 1, "available_parallelism should yield >= 1");
+            // We can't pin an exact number (CI varies), but it should match
+            // what std reports directly.
+            let expected = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4);
+            assert_eq!(n, expected);
+        });
+    }
 
     // --- has_ext -------------------------------------------------------------
 
