@@ -60,9 +60,8 @@ impl TaskParams {
 /// skipped automatically when stdin is not a TTY, e.g. in CI).
 ///
 /// `jobs` caps how many archives may be extracted in parallel. `0` means
-/// "auto" — fall back to the `AUTOARC_JOBS` env var, else
-/// [`std::thread::available_parallelism`] (else `4`). Use `1` for strictly
-/// sequential extraction.
+/// "auto" — fall back to [`std::thread::available_parallelism`] (else `4`).
+/// Use `1` for strictly sequential extraction.
 pub async fn run(
     dir: PathBuf,
     max_depth: usize,
@@ -258,28 +257,24 @@ fn spawn_task(
 }
 
 // ============================================================================
-// Jobs resolution: CLI flag > AUTOARC_JOBS env var > available_parallelism > 4.
+// Jobs resolution: CLI flag > available_parallelism > 4.
 // ============================================================================
 
 /// Resolve the effective `--jobs` value, following the precedence:
 ///
 /// 1. If `cli_jobs > 0`, use it verbatim.
-/// 2. Otherwise consult `AUTOARC_JOBS` (must parse to a positive integer).
-/// 3. Otherwise fall back to [`std::thread::available_parallelism`].
-/// 4. If even that fails, use a hard-coded `4`.
+/// 2. Otherwise fall back to [`std::thread::available_parallelism`].
+/// 3. If even that fails, use a hard-coded `4`.
 ///
 /// The returned value is guaranteed to be `>= 1` so that callers can hand it
 /// straight to `Semaphore::new` without additional bounds checks.
+///
+/// Parallelism is deliberately **not** configurable through an environment
+/// variable: it's a per-invocation tuning knob (unlike persistent secrets
+/// such as `AUTOARC_PASSWORDS`), so it lives on the CLI only.
 fn resolve_jobs(cli_jobs: usize) -> usize {
     if cli_jobs > 0 {
         return cli_jobs;
-    }
-    let from_env = std::env::var("AUTOARC_JOBS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<usize>().ok())
-        .filter(|n| *n > 0);
-    if let Some(n) = from_env {
-        return n;
     }
     std::thread::available_parallelism()
         .map(|n| n.get())
@@ -692,71 +687,39 @@ mod tests {
 
     // --- resolve_jobs --------------------------------------------------------
 
-    /// Serial guard so tests that read/write `AUTOARC_JOBS` can't race each
-    /// other under `cargo test`'s default thread pool.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn with_env<F: FnOnce() -> R, R>(key: &str, val: Option<&str>, f: F) -> R {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // SAFETY: single-threaded section enforced by ENV_LOCK.
-        let prev = std::env::var(key).ok();
-        unsafe {
-            match val {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-        let out = f();
-        unsafe {
-            match prev {
-                Some(p) => std::env::set_var(key, p),
-                None => std::env::remove_var(key),
-            }
-        }
-        out
+    #[test]
+    fn resolve_jobs_returns_cli_value_verbatim_when_positive() {
+        assert_eq!(resolve_jobs(1), 1);
+        assert_eq!(resolve_jobs(3), 3);
+        assert_eq!(resolve_jobs(99), 99);
     }
 
     #[test]
-    fn resolve_jobs_prefers_explicit_cli_flag_over_env_and_cpu() {
-        with_env("AUTOARC_JOBS", Some("99"), || {
-            // CLI value wins even when env var is also set.
-            assert_eq!(resolve_jobs(3), 3);
-            assert_eq!(resolve_jobs(1), 1);
-        });
+    fn resolve_jobs_zero_falls_back_to_available_parallelism() {
+        let n = resolve_jobs(0);
+        assert!(n >= 1, "auto fallback must yield >= 1, got {n}");
+        // Must match what std reports directly since that's the documented
+        // auto-path.
+        let expected = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        assert_eq!(n, expected);
     }
 
     #[test]
-    fn resolve_jobs_reads_env_var_when_cli_is_zero() {
-        with_env("AUTOARC_JOBS", Some("7"), || {
-            assert_eq!(resolve_jobs(0), 7);
-        });
-    }
-
-    #[test]
-    fn resolve_jobs_ignores_invalid_env_and_falls_back_to_cpu_count() {
-        with_env("AUTOARC_JOBS", Some("not-a-number"), || {
-            let n = resolve_jobs(0);
-            assert!(n >= 1, "auto fallback must yield >= 1, got {n}");
-        });
-        with_env("AUTOARC_JOBS", Some("0"), || {
-            // "0" is treated as "auto" (same as unset).
-            let n = resolve_jobs(0);
-            assert!(n >= 1);
-        });
-    }
-
-    #[test]
-    fn resolve_jobs_unset_env_falls_back_to_available_parallelism() {
-        with_env("AUTOARC_JOBS", None, || {
-            let n = resolve_jobs(0);
-            assert!(n >= 1, "available_parallelism should yield >= 1");
-            // We can't pin an exact number (CI varies), but it should match
-            // what std reports directly.
-            let expected = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4);
-            assert_eq!(n, expected);
-        });
+    fn resolve_jobs_ignores_autoarc_jobs_env_var() {
+        // AUTOARC_JOBS is intentionally *not* consulted — parallelism is a
+        // per-invocation knob, not a persistent secret. Even when the env
+        // var is set to something silly, the CLI path must still win.
+        // SAFETY: single-threaded set_var is fine for this short assertion.
+        unsafe { std::env::set_var("AUTOARC_JOBS", "999") };
+        assert_eq!(resolve_jobs(2), 2, "CLI flag must override any env var");
+        let auto = resolve_jobs(0);
+        assert_ne!(
+            auto, 999,
+            "auto path must not read AUTOARC_JOBS (saw 999, that's the env leak)"
+        );
+        unsafe { std::env::remove_var("AUTOARC_JOBS") };
     }
 
     // --- has_ext -------------------------------------------------------------

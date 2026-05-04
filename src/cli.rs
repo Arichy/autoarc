@@ -53,9 +53,10 @@ pub struct Args {
     /// Maximum number of archives to extract in parallel.
     ///
     /// `0` (the default) means "auto" — use
-    /// [`std::thread::available_parallelism`] (falling back to `4`). The
-    /// environment variable `AUTOARC_JOBS` is consulted when this flag is
-    /// left at `0`. Use `-j 1` to force strictly sequential extraction.
+    /// [`std::thread::available_parallelism`] (falling back to `4`). Use
+    /// `-j 1` to force strictly sequential extraction. Parallelism is a
+    /// per-invocation knob and is *not* configurable via an environment
+    /// variable.
     #[arg(short = 'j', long, default_value_t = 0)]
     pub jobs: usize,
 

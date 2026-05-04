@@ -66,8 +66,11 @@ cp .env.example .env
 | Variable             | Required | Description                                                                                |
 |----------------------|----------|--------------------------------------------------------------------------------------------|
 | `AUTOARC_PASSWORDS`  | no       | Comma-separated list of candidate passwords. Unset = try no-password only.                 |
-| `AUTOARC_JOBS`       | no       | Max parallel extractions. `0` / unset = auto (`available_parallelism`). Overridden by `-j`.|
 | `RUST_LOG`           | no       | Tracing filter (`info`, `debug`, ...). Defaults to `warn`.                                 |
+
+Parallelism (`-j / --jobs`) is intentionally a CLI-only knob — it's a
+per-invocation setting, not a persistent secret, so it does **not** read
+from `.env` or any environment variable.
 
 ## Usage
 
